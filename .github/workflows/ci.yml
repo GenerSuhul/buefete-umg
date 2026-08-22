@@ -1,0 +1,46 @@
+name: Calidad continua
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Restaurar y validar .NET
+        shell: pwsh
+        run: |
+          dotnet tool restore
+          dotnet restore BufeteJuridico.slnx --locked-mode
+          dotnet format BufeteJuridico.slnx --verify-no-changes --no-restore --verbosity minimal
+          dotnet build BufeteJuridico.slnx --no-restore
+          dotnet test BufeteJuridico.slnx --no-build
+          dotnet list BufeteJuridico.slnx package --vulnerable --include-transitive
+      - name: Validar frontend
+        working-directory: frontend
+        run: |
+          npm ci --ignore-scripts
+          npm audit --audit-level=moderate
+          npm run check
+
