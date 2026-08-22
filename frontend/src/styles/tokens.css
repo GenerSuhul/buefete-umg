@@ -1,0 +1,36 @@
+:root {
+  --umg-50: #f1f6fc;
+  --umg-100: #e3edf9;
+  --umg-200: #cfe2ff;
+  --umg-300: #9ec3ea;
+  --umg-400: #669bcf;
+  --umg-500: #3975ad;
+  --umg-600: #285e92;
+  --umg-700: #194775;
+  --umg-800: #0c365f;
+  --umg-900: #01274f;
+  --ink-950: #0b1320;
+  --ink-800: #243142;
+  --ink-600: #5f6977;
+  --ink-500: #7d8692;
+  --surface-page: #dedee3;
+  --surface-app: #f3f4f4;
+  --surface-card: #ffffff;
+  --surface-soft: #f7f8f8;
+  --surface-muted: #edf0f2;
+  --line: #e4e8ec;
+  --success: #20885f;
+  --success-soft: #e8f6ef;
+  --warning: #9b6a12;
+  --warning-soft: #fff6dd;
+  --danger: #b6404d;
+  --danger-soft: #fcecef;
+  --radius-sm: 12px;
+  --radius-md: 18px;
+  --radius-lg: 24px;
+  --radius-xl: 30px;
+  --shadow-soft: 0 10px 32px rgb(7 31 54 / 6%);
+  --shadow-float: 0 20px 60px rgb(7 31 54 / 14%);
+  --font-sans: Manrope, Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --transition: 180ms cubic-bezier(.2, .8, .2, 1);
+}

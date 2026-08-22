@@ -1,0 +1,31 @@
+# .NET
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/coverage/
+artifacts/
+.artifacts/
+TestResults/
+*.user
+*.suo
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# Local secrets and environment
+.env
+.env.*
+!.env.example
+secrets.json
+
+# Operating system
+.DS_Store
+Thumbs.db
+
+# Local uploads and logs
+storage/
+.data/
+logs/

@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/BufeteJuridico.Api/BufeteJuridico.Api.csproj" />
+    <Project Path="src/BufeteJuridico.Application/BufeteJuridico.Application.csproj" />
+    <Project Path="src/BufeteJuridico.Domain/BufeteJuridico.Domain.csproj" />
+    <Project Path="src/BufeteJuridico.Infrastructure/BufeteJuridico.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BufeteJuridico.IntegrationTests/BufeteJuridico.IntegrationTests.csproj" />
+    <Project Path="tests/BufeteJuridico.UnitTests/BufeteJuridico.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/BufeteJuridico.ScannerAgent/BufeteJuridico.ScannerAgent.csproj" />
+  </Folder>
+</Solution>

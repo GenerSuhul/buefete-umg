@@ -1,0 +1,432 @@
+// NO VIGENTE - No utilizar como fuente funcional ni como diseño aprobado.
+// El equipo decidió volver a los requerimientos de la reunión antes de modelar datos.
+// Referencia vigente: docs/requerimientos/06_CONTEXTO_REUNION.md
+//
+// Diagrama ERD del MVP - Clínica Jurídica UMG
+// Compatible con https://dbdiagram.io
+// Documentación DBML: https://dbml.dbdiagram.io/docs
+
+Project bufete_juridico_umg {
+  database_type: 'PostgreSQL'
+  Note: '''
+    Modelo lógico del MVP para la gestión interna de la Clínica Jurídica UMG.
+    Los clientes no son usuarios del sistema.
+    La eliminación física debe sustituirse por desactivación o archivo siempre
+    que existan registros históricos relacionados.
+  '''
+}
+
+Enum estado_usuario {
+  PENDIENTE
+  ACTIVO
+  INACTIVO
+  BLOQUEADO
+}
+
+Enum estado_archivo {
+  ACTIVO
+  REEMPLAZADO
+  ELIMINADO
+}
+
+Enum estado_validacion_documento {
+  PENDIENTE
+  VALIDO
+  RECHAZADO
+  VENCIDO
+  REEMPLAZADO
+}
+
+Enum estado_proceso {
+  BORRADOR
+  ABIERTO
+  EN_TRAMITE
+  SUSPENDIDO
+  CERRADO
+  ARCHIVADO
+}
+
+Enum estado_asignacion {
+  ACTIVA
+  FINALIZADA
+  CANCELADA
+}
+
+Enum estado_actuacion {
+  ACTIVA
+  CORREGIDA
+  ANULADA
+}
+
+Enum estado_envio {
+  PENDIENTE
+  ENVIADO
+  FALLIDO
+}
+
+Table roles {
+  id_rol bigint [pk, increment]
+  nombre varchar(50) [not null, unique, note: 'ADMIN_GENERAL, SECRETARIA o ALUMNO']
+  descripcion varchar(255)
+  activo boolean [not null, default: true]
+}
+
+Table usuarios {
+  id_usuario bigint [pk, increment]
+  id_rol bigint [not null]
+  nombres varchar(100) [not null]
+  apellidos varchar(100) [not null]
+  correo varchar(254) [not null, unique]
+  credencial varchar(100) [not null, unique, note: 'Nombre de usuario o identificador de acceso']
+  clave_hash varchar(255) [not null, note: 'Nunca almacenar contraseñas en texto claro']
+  telefono varchar(30)
+  foto_ruta varchar(500)
+  fecha_inicio date
+  fecha_fin date
+  estado estado_usuario [not null, default: 'PENDIENTE']
+  ultimo_acceso timestamp
+  creado_en timestamp [not null]
+  actualizado_en timestamp [not null]
+
+  Note: 'Usuarios internos: administradores, secretarías y alumnos.'
+}
+
+Table alumnos {
+  id_alumno bigint [pk, increment]
+  id_usuario bigint [not null, unique]
+  carne varchar(30) [not null, unique]
+  carrera varchar(150)
+  sede varchar(150)
+  observaciones text
+  creado_en timestamp [not null]
+
+  Note: 'Extensión uno a uno de usuarios para los datos propios del alumno.'
+}
+
+Table clientes {
+  id_cliente bigint [pk, increment]
+  cui varchar(20) [unique, note: 'Puede ser nulo si se autoriza registrar temporalmente a una persona sin CUI']
+  nombres varchar(100) [not null]
+  apellidos varchar(100) [not null]
+  fecha_nacimiento date
+  telefono varchar(30)
+  correo varchar(254)
+  direccion text
+  estado varchar(30) [not null, default: 'ACTIVO']
+  creado_por bigint [not null]
+  creado_en timestamp [not null]
+  actualizado_en timestamp [not null]
+
+  indexes {
+    (apellidos, nombres) [name: 'idx_clientes_nombre']
+  }
+}
+
+Table tipos_documento {
+  id_tipo_documento bigint [pk, increment]
+  nombre varchar(150) [not null, unique, note: 'Ejemplo: DPI o Certificación de nacimiento']
+  descripcion text
+  activo boolean [not null, default: true]
+}
+
+Table archivos {
+  id_archivo bigint [pk, increment]
+  nombre_original varchar(255) [not null]
+  ruta_almacenamiento varchar(500) [not null, unique, note: 'Clave privada del objeto; no debe ser una URL pública']
+  tipo_mime varchar(100) [not null]
+  tamano_bytes bigint [not null]
+  hash_archivo varchar(128) [not null, note: 'Huella digital para integridad y detección de duplicados']
+  cargado_por bigint [not null]
+  cargado_en timestamp [not null]
+  estado estado_archivo [not null, default: 'ACTIVO']
+
+  indexes {
+    hash_archivo [name: 'idx_archivos_hash']
+  }
+}
+
+Table documentos_cliente {
+  id_documento_cliente bigint [pk, increment]
+  id_cliente bigint [not null]
+  id_tipo_documento bigint [not null]
+  id_archivo bigint [not null, unique]
+  fecha_emision date
+  fecha_vencimiento date
+  numero_version integer [not null, default: 1]
+  estado_validacion estado_validacion_documento [not null, default: 'PENDIENTE']
+  observaciones text
+  creado_en timestamp [not null]
+
+  indexes {
+    (id_cliente, id_tipo_documento, numero_version) [unique, name: 'uq_documento_cliente_version']
+  }
+}
+
+Table requisitos_alumno {
+  id_requisito_alumno bigint [pk, increment]
+  nombre varchar(150) [not null, unique, note: 'Ejemplo: formulario, comprobante de pago o DPI']
+  descripcion text
+  obligatorio boolean [not null, default: true]
+  activo boolean [not null, default: true]
+}
+
+Table documentos_alumno {
+  id_documento_alumno bigint [pk, increment]
+  id_alumno bigint [not null]
+  id_requisito_alumno bigint [not null]
+  id_archivo bigint [not null, unique]
+  numero_version integer [not null, default: 1]
+  estado_validacion estado_validacion_documento [not null, default: 'PENDIENTE']
+  observaciones text
+  creado_en timestamp [not null]
+
+  indexes {
+    (id_alumno, id_requisito_alumno, numero_version) [unique, name: 'uq_documento_alumno_version']
+  }
+}
+
+Table tipos_proceso {
+  id_tipo_proceso bigint [pk, increment]
+  nombre varchar(150) [not null, unique, note: 'Ejemplo: pensión alimenticia']
+  descripcion text
+  activo boolean [not null, default: true]
+}
+
+Table requisitos_proceso {
+  id_requisito_proceso bigint [pk, increment]
+  id_tipo_proceso bigint [not null]
+  id_tipo_documento bigint [not null]
+  nombre_mostrado varchar(150) [not null, note: 'Etiqueta que se muestra en la casilla del expediente']
+  obligatorio boolean [not null, default: true]
+  orden integer [not null, default: 1]
+  activo boolean [not null, default: true]
+
+  indexes {
+    (id_tipo_proceso, id_tipo_documento) [unique, name: 'uq_requisito_tipo_documento']
+    (id_tipo_proceso, orden) [name: 'idx_requisito_orden']
+  }
+}
+
+Table procesos {
+  id_proceso bigint [pk, increment]
+  id_cliente bigint [not null]
+  id_tipo_proceso bigint [not null]
+  codigo_interno varchar(50) [not null, unique]
+  numero_expediente varchar(100)
+  juzgado varchar(200)
+  estado estado_proceso [not null, default: 'BORRADOR']
+  fecha_apertura date [not null]
+  fecha_cierre date
+  motivo_cierre text
+  creado_por bigint [not null]
+  creado_en timestamp [not null]
+  actualizado_en timestamp [not null]
+
+  indexes {
+    numero_expediente [name: 'idx_procesos_numero_expediente']
+    (estado, fecha_apertura) [name: 'idx_procesos_estado_fecha']
+  }
+}
+
+Table documentos_proceso {
+  id_documento_proceso bigint [pk, increment]
+  id_proceso bigint [not null]
+  id_requisito_proceso bigint [not null]
+  id_documento_cliente bigint [not null]
+  estado_verificacion estado_validacion_documento [not null, default: 'PENDIENTE']
+  verificado_por bigint
+  verificado_en timestamp
+  observaciones text
+
+  indexes {
+    (id_proceso, id_requisito_proceso) [unique, name: 'uq_documento_requisito_proceso']
+  }
+
+  Note: 'Vincula una versión documental del cliente con un requisito del proceso, sin duplicar el archivo.'
+}
+
+Table asignaciones_alumno {
+  id_asignacion bigint [pk, increment]
+  id_proceso bigint [not null]
+  id_alumno bigint [not null]
+  asignado_por bigint [not null]
+  fecha_asignacion date [not null]
+  fecha_fin date
+  responsabilidad varchar(255)
+  estado estado_asignacion [not null, default: 'ACTIVA']
+  motivo_fin text
+
+  indexes {
+    (id_alumno, estado) [name: 'idx_asignaciones_alumno_estado']
+    (id_proceso, estado) [name: 'idx_asignaciones_proceso_estado']
+  }
+
+  Note: 'Conserva el historial. La regla funcional impide dos asignaciones activas para el mismo alumno y proceso.'
+}
+
+Table tipos_actuacion {
+  id_tipo_actuacion bigint [pk, increment]
+  nombre varchar(100) [not null, unique, note: 'MEMORIAL, REVISION_MEMORIAL, PRESENTACION_MEMORIAL, NOTIFICACION, etc.']
+  descripcion text
+  activo boolean [not null, default: true]
+}
+
+Table actuaciones_procesales {
+  id_actuacion bigint [pk, increment]
+  id_proceso bigint [not null]
+  id_tipo_actuacion bigint [not null]
+  id_actuacion_padre bigint [note: 'Permite enlazar una revisión o presentación con su memorial']
+  titulo varchar(200) [not null]
+  descripcion text
+  fecha_actuacion date [not null, note: 'Fecha efectiva del acontecimiento']
+  hora_actuacion time
+  registrado_por bigint [not null]
+  registrado_en timestamp [not null, note: 'Fecha real de ingreso al sistema']
+  actualizado_en timestamp [not null]
+  estado estado_actuacion [not null, default: 'ACTIVA']
+
+  indexes {
+    (id_proceso, fecha_actuacion) [name: 'idx_actuaciones_linea_tiempo']
+    id_actuacion_padre [name: 'idx_actuaciones_padre']
+  }
+}
+
+Table archivos_actuacion {
+  id_archivo_actuacion bigint [pk, increment]
+  id_actuacion bigint [not null]
+  id_archivo bigint [not null]
+  etiqueta varchar(150)
+  observaciones text
+
+  indexes {
+    (id_actuacion, id_archivo) [unique, name: 'uq_archivo_actuacion']
+  }
+}
+
+Table bitacora_actividad {
+  id_bitacora bigint [pk, increment]
+  id_usuario bigint [not null]
+  accion varchar(100) [not null, note: 'CREAR, EDITAR, DESCARGAR, ASIGNAR, CERRAR, ENVIAR, etc.']
+  entidad varchar(100) [not null]
+  id_registro varchar(100)
+  datos_anteriores json
+  datos_nuevos json
+  direccion_ip varchar(45)
+  realizado_en timestamp [not null]
+
+  indexes {
+    (id_usuario, realizado_en) [name: 'idx_bitacora_usuario_fecha']
+    (entidad, id_registro) [name: 'idx_bitacora_entidad_registro']
+    (accion, realizado_en) [name: 'idx_bitacora_accion_fecha']
+  }
+
+  Note: 'Registro inalterable de trazabilidad. entidad e id_registro son una referencia lógica para auditar tablas diferentes.'
+}
+
+Table reportes {
+  id_reporte bigint [pk, increment]
+  tipo_reporte varchar(100) [not null]
+  periodo_inicio date
+  periodo_fin date
+  filtros json
+  generado_por bigint [not null]
+  id_archivo bigint [unique, note: 'PDF generado para impresión o envío']
+  generado_en timestamp [not null]
+}
+
+Table envios_reporte {
+  id_envio bigint [pk, increment]
+  id_reporte bigint [not null]
+  enviado_por bigint [not null]
+  destinatario varchar(254) [not null]
+  asunto varchar(255) [not null]
+  estado_envio estado_envio [not null, default: 'PENDIENTE']
+  enviado_en timestamp
+  detalle_error text
+}
+
+// Relaciones de usuarios y perfiles
+Ref rol_usuarios: usuarios.id_rol > roles.id_rol
+Ref usuario_alumno: alumnos.id_usuario - usuarios.id_usuario
+
+// Autoría, archivos y trazabilidad
+Ref usuario_crea_cliente: clientes.creado_por > usuarios.id_usuario
+Ref usuario_carga_archivo: archivos.cargado_por > usuarios.id_usuario
+Ref usuario_bitacora: bitacora_actividad.id_usuario > usuarios.id_usuario
+
+// Papelería del alumno
+Ref alumno_documentos: documentos_alumno.id_alumno > alumnos.id_alumno
+Ref requisito_documentos_alumno: documentos_alumno.id_requisito_alumno > requisitos_alumno.id_requisito_alumno
+Ref archivo_documento_alumno: documentos_alumno.id_archivo - archivos.id_archivo
+
+// Papelería del cliente
+Ref cliente_documentos: documentos_cliente.id_cliente > clientes.id_cliente
+Ref tipo_documentos_cliente: documentos_cliente.id_tipo_documento > tipos_documento.id_tipo_documento
+Ref archivo_documento_cliente: documentos_cliente.id_archivo - archivos.id_archivo
+
+// Configuración y apertura de procesos
+Ref tipo_requisitos_proceso: requisitos_proceso.id_tipo_proceso > tipos_proceso.id_tipo_proceso
+Ref documento_requisitos_proceso: requisitos_proceso.id_tipo_documento > tipos_documento.id_tipo_documento
+Ref cliente_procesos: procesos.id_cliente > clientes.id_cliente
+Ref tipo_procesos: procesos.id_tipo_proceso > tipos_proceso.id_tipo_proceso
+Ref usuario_crea_proceso: procesos.creado_por > usuarios.id_usuario
+
+// Checklist documental del proceso
+Ref proceso_documentos: documentos_proceso.id_proceso > procesos.id_proceso
+Ref requisito_documento_proceso: documentos_proceso.id_requisito_proceso > requisitos_proceso.id_requisito_proceso
+Ref documento_cliente_en_proceso: documentos_proceso.id_documento_cliente > documentos_cliente.id_documento_cliente
+Ref usuario_verifica_documento: documentos_proceso.verificado_por > usuarios.id_usuario
+
+// Asignaciones de alumnos
+Ref proceso_asignaciones: asignaciones_alumno.id_proceso > procesos.id_proceso
+Ref alumno_asignaciones: asignaciones_alumno.id_alumno > alumnos.id_alumno
+Ref usuario_asigna_alumno: asignaciones_alumno.asignado_por > usuarios.id_usuario
+
+// Línea de tiempo y adjuntos
+Ref proceso_actuaciones: actuaciones_procesales.id_proceso > procesos.id_proceso
+Ref tipo_actuaciones: actuaciones_procesales.id_tipo_actuacion > tipos_actuacion.id_tipo_actuacion
+Ref actuacion_padre: actuaciones_procesales.id_actuacion_padre > actuaciones_procesales.id_actuacion
+Ref usuario_registra_actuacion: actuaciones_procesales.registrado_por > usuarios.id_usuario
+Ref actuacion_archivos: archivos_actuacion.id_actuacion > actuaciones_procesales.id_actuacion
+Ref archivo_en_actuacion: archivos_actuacion.id_archivo > archivos.id_archivo
+
+// Reportes y correo
+Ref usuario_genera_reporte: reportes.generado_por > usuarios.id_usuario
+Ref archivo_reporte: reportes.id_archivo - archivos.id_archivo
+Ref reporte_envios: envios_reporte.id_reporte > reportes.id_reporte
+Ref usuario_envia_reporte: envios_reporte.enviado_por > usuarios.id_usuario
+
+TableGroup seguridad {
+  roles
+  usuarios
+  bitacora_actividad
+}
+
+TableGroup personas {
+  alumnos
+  clientes
+  requisitos_alumno
+  documentos_alumno
+}
+
+TableGroup documentos {
+  tipos_documento
+  archivos
+  documentos_cliente
+}
+
+TableGroup expedientes {
+  tipos_proceso
+  requisitos_proceso
+  procesos
+  documentos_proceso
+  asignaciones_alumno
+  tipos_actuacion
+  actuaciones_procesales
+  archivos_actuacion
+}
+
+TableGroup informes {
+  reportes
+  envios_reporte
+}

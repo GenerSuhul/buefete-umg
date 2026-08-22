@@ -1,0 +1,14 @@
+@BufeteJuridico_Api_HostAddress = http://localhost:5103
+
+GET {{BufeteJuridico_Api_HostAddress}}/api/v1/system
+Accept: application/json
+
+###
+
+GET {{BufeteJuridico_Api_HostAddress}}/health/live
+Accept: application/json
+
+###
+
+GET {{BufeteJuridico_Api_HostAddress}}/health/ready
+Accept: application/json
