@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Reporte privado de seguridad
+    url: https://github.com/GenerSuhul/buefete-umg/security/advisories/new
+    about: Use este canal para vulnerabilidades y nunca publique datos sensibles.

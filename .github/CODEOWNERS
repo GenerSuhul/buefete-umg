@@ -1,0 +1,10 @@
+# Revisión por el equipo responsable del Bufete Popular UMG
+* @GenerSuhul
+
+# Cambios de seguridad, infraestructura y datos
+/.github/ @GenerSuhul
+/compose.yaml @GenerSuhul
+/Directory.*.props @GenerSuhul
+/src/BufeteJuridico.Api/ @GenerSuhul
+/src/BufeteJuridico.Infrastructure/Persistence/ @GenerSuhul
+/docs/requerimientos/ @GenerSuhul

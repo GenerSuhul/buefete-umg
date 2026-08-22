@@ -1,0 +1,41 @@
+name: Reporte de defecto
+description: Registrar una falla reproducible sin incluir datos personales.
+title: "[Defecto]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "No adjunte expedientes, DPI, credenciales ni documentos reales."
+  - type: textarea
+    id: description
+    attributes:
+      label: Descripción
+      description: Indique qué ocurrió y cuál era el resultado esperado.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Pasos para reproducir
+      placeholder: "1. Iniciar sesión como…\n2. Abrir…\n3. Seleccionar…"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área
+      options:
+        - Clientes
+        - Alumnos
+        - Expedientes
+        - Documentos y escáner
+        - Reportes y auditoría
+        - Usuarios y permisos
+        - Plataforma e infraestructura
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidencia técnica anonimizada
+      description: Mensajes, navegador y versión; elimine cualquier dato sensible.
