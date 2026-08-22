@@ -125,14 +125,6 @@ de producción. GitHub Actions ejecuta los mismos controles en cada cambio.
 - [Producción y alta disponibilidad](docs/arquitectura/09_ARQUITECTURA_PRODUCCION_ALTA_DISPONIBILIDAD.md)
 - [Auditoría técnica integral](docs/auditoria/AUDITORIA_TECNICA_INTEGRAL_2026-08-21.md)
 
-## Colaboración y seguridad
-
-Los cambios se realizan mediante ramas y pull requests. Consulte
-[CONTRIBUTING.md](CONTRIBUTING.md) antes de contribuir y reporte
-vulnerabilidades mediante [SECURITY.md](SECURITY.md), nunca en una incidencia
-pública. No se aceptan documentos reales, credenciales ni datos personales en
-commits, pruebas o capturas.
-
 ## Estado
 
 Base técnica auditada y validada localmente. La salida a producción requiere
