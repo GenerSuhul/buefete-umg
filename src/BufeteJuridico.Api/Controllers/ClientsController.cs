@@ -1,3 +1,4 @@
+using BufeteJuridico.Application.Administration;
 using BufeteJuridico.Application.Authorization;
 using BufeteJuridico.Application.Clients;
 using BufeteJuridico.Application.Common;
@@ -7,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace BufeteJuridico.Api.Controllers;
 
 [Authorize]
-public sealed class ClientsController(IClientService service) : ApiV1ControllerBase
+public sealed class ClientsController(IClientService service, IDeletedRecordService deletedRecords) : ApiV1ControllerBase
 {
     [HttpGet]
     [Authorize(Policy = Permissions.ClientsRead)]
@@ -37,6 +38,14 @@ public sealed class ClientsController(IClientService service) : ApiV1ControllerB
     [Authorize(Policy = Permissions.ClientsWrite)]
     public async Task<ActionResult<ClientDto>> Update(Guid id, SaveClientRequest request, CancellationToken cancellationToken) =>
         Ok(await service.UpdateClientAsync(id, request, cancellationToken));
+
+    [HttpDelete("{id:guid}")]
+    [Authorize(Policy = Permissions.RecordsDelete)]
+    public async Task<IActionResult> Delete(Guid id, DeleteRecordRequest request, CancellationToken cancellationToken)
+    {
+        await deletedRecords.DeleteAsync(DeletedRecordType.Client, id, request.Reason, cancellationToken);
+        return NoContent();
+    }
 
     [HttpGet("{clientId:guid}/income-declarations")]
     [Authorize(Policy = Permissions.ClientsRead)]

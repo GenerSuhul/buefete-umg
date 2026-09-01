@@ -1,9 +1,11 @@
 using BufeteJuridico.Application.Authorization;
 using BufeteJuridico.Application.Common;
+using BufeteJuridico.Application.Documents;
 using BufeteJuridico.Application.Identity;
 using BufeteJuridico.Application.Students;
 using BufeteJuridico.Domain.Cases;
 using BufeteJuridico.Domain.Catalogs;
+using BufeteJuridico.Domain.Documents;
 using BufeteJuridico.Domain.Students;
 using BufeteJuridico.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -13,6 +15,7 @@ namespace BufeteJuridico.Infrastructure.Students;
 internal sealed class StudentService(
     BufeteDbContext dbContext,
     IUserManagementService userManagementService,
+    IDocumentService documentService,
     ICurrentUser currentUser,
     TimeProvider timeProvider)
     : IStudentService
@@ -62,6 +65,57 @@ internal sealed class StudentService(
         return Map(student, Photo(student, photos));
     }
 
+    public async Task<PagedResult<StudentAssignmentCandidateDto>> GetAssignmentCandidatesAsync(
+        Guid caseId,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        if (!currentUser.HasPermission(Permissions.CasesAssign))
+            throw new ForbiddenException("No tiene permiso para asignar alumnos.");
+
+        var caseExists = await dbContext.LegalCases.AsNoTracking()
+            .AnyAsync(item => item.Id == caseId, cancellationToken);
+        if (!caseExists)
+            throw new NotFoundException("No se encontró el expediente.");
+
+        var query = dbContext.Students.AsNoTracking()
+            .Where(student => student.IsActive)
+            .Where(student => dbContext.EnrollmentApplications.Any(enrollment =>
+                enrollment.StudentId == student.Id && enrollment.Status == EnrollmentStatus.Approved))
+            .Where(student => !dbContext.CaseAssignments.Any(assignment =>
+                assignment.LegalCaseId == caseId &&
+                assignment.StudentId == student.Id &&
+                assignment.Status == CaseAssignmentStatus.Active));
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var normalized = TextNormalization.Normalize(search);
+            var exact = search.Trim();
+            query = query.Where(student =>
+                student.NormalizedFullName.Contains(normalized) ||
+                student.StudentCardNumber.Contains(exact) ||
+                student.Email.Contains(exact));
+        }
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var total = await query.CountAsync(cancellationToken);
+        var students = await query
+            .OrderBy(student => student.FullName)
+            .ThenBy(student => student.Id)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+        var photos = await GetPhotoMapAsync(students, cancellationToken);
+
+        var items = students.Select(student => new StudentAssignmentCandidateDto(
+            student.Id,
+            Photo(student, photos),
+            student.FullName,
+            student.StudentCardNumber)).ToList();
+        return new PagedResult<StudentAssignmentCandidateDto>(items, page, pageSize, total);
+    }
+
     public async Task<StudentProfileDto> GetStudentProfileAsync(Guid id, CancellationToken cancellationToken)
     {
         await EnsureCanReadStudentAsync(id, cancellationToken);
@@ -72,6 +126,11 @@ internal sealed class StudentService(
             .Where(item => item.StudentId == id)
             .OrderByDescending(item => item.CreatedAtUtc)
             .ToListAsync(cancellationToken);
+        var requirementIds = enrollments.SelectMany(item => item.Requirements)
+            .Select(item => item.RequirementDefinitionId).Distinct().ToList();
+        var requirementFlags = await dbContext.RequirementDefinitions.AsNoTracking()
+            .Where(item => requirementIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, item => item.IsRequired, cancellationToken);
         var assignments = await dbContext.CaseAssignments.AsNoTracking()
             .Include(item => item.LegalCase).ThenInclude(item => item.Client)
             .Include(item => item.LegalCase).ThenInclude(item => item.ProcessType)
@@ -83,6 +142,7 @@ internal sealed class StudentService(
         {
             var lastStep = item.LegalCase.Timeline.OrderByDescending(step => step.OccurredAtUtc).FirstOrDefault();
             return new StudentCaseDto(
+                item.Id,
                 item.LegalCaseId,
                 item.LegalCase.CaseNumber,
                 item.LegalCase.Client.FullName,
@@ -90,11 +150,18 @@ internal sealed class StudentService(
                 item.LegalCase.Status.ToString(),
                 item.LegalCase.Stage,
                 item.IsPrimary,
+                item.Status,
+                item.AssignedAtUtc,
+                item.EndedAtUtc,
+                item.EndReason,
                 lastStep?.Title,
                 lastStep?.OccurredAtUtc);
         }).ToList();
         var photos = await GetPhotoMapAsync([student], cancellationToken);
-        return new StudentProfileDto(Map(student, Photo(student, photos)), enrollments.Select(Map).ToList(), cases);
+        return new StudentProfileDto(
+            Map(student, Photo(student, photos)),
+            enrollments.Select(item => Map(item, requirementFlags)).ToList(),
+            cases);
     }
 
     public async Task<StudentDto> CreateStudentAsync(SaveStudentRequest request, CancellationToken cancellationToken)
@@ -121,8 +188,9 @@ internal sealed class StudentService(
             var enrollment = await CreateEnrollmentAsync(student.Id, request.Enrollment, cancellationToken);
             var access = await ProvisionAccessAsync(student.Id, request.Access, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            var persistedStudent = await GetStudentAsync(student.Id, cancellationToken);
             return new StudentRegistrationDto(
-                student with { UserAccountId = access.UserAccountId },
+                persistedStudent,
                 enrollment,
                 access);
         });
@@ -161,6 +229,9 @@ internal sealed class StudentService(
         ValidateStudent(request);
         var student = await dbContext.Students.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
             ?? throw new NotFoundException("No se encontró el alumno.");
+        if (request.ConcurrencyToken is not Guid concurrencyToken || concurrencyToken == Guid.Empty)
+            throw new ValidationException("La versión del alumno es obligatoria para guardar cambios.");
+        dbContext.Entry(student).Property(item => item.ConcurrencyToken).OriginalValue = concurrencyToken;
 
         await EnsureUniqueStudentDataAsync(id, request, cancellationToken);
         Apply(student, request);
@@ -297,6 +368,9 @@ internal sealed class StudentService(
             }
         }
 
+        if (request.ResolutionDocumentId is Guid resolutionDocumentId)
+            await documentService.EnsureDocumentMatchesContextAsync(resolutionDocumentId, DocumentContextType.Enrollment, enrollment.Id, cancellationToken);
+
         enrollment.Status = request.Status;
         enrollment.ResolutionNotes = Clean(request.ResolutionNotes);
         enrollment.ResolutionDocumentId = request.ResolutionDocumentId;
@@ -327,7 +401,7 @@ internal sealed class StudentService(
         var enrollment = await LoadEnrollmentAsync(enrollmentId, cancellationToken);
         if (enrollment.Status != EnrollmentStatus.Approved)
         {
-            throw new ConflictException("Solo se puede emitir carné para una inscripción aprobada.");
+            throw new ConflictException("Solo se puede registrar el carné cuando la inscripción está aprobada.");
         }
 
         if (request.ExpirationDate < request.IssuedDate)
@@ -361,6 +435,9 @@ internal sealed class StudentService(
             ?? throw new NotFoundException("No se encontró el requisito de inscripción.");
         var definition = await dbContext.RequirementDefinitions.AsNoTracking()
             .SingleAsync(item => item.Id == requirement.RequirementDefinitionId, cancellationToken);
+
+        if (request.DocumentId is Guid requirementDocumentId)
+            await documentService.EnsureDocumentMatchesContextAsync(requirementDocumentId, DocumentContextType.Enrollment, enrollment.Id, cancellationToken);
 
         requirement.Status = RequirementRules.DetermineStatus(
             request.Status,
@@ -396,7 +473,10 @@ internal sealed class StudentService(
     {
         if (await dbContext.Students.AnyAsync(item => item.Id != id && item.StudentCardNumber == request.StudentCardNumber.Trim(), cancellationToken))
             throw new ConflictException("El carné universitario ya está registrado.");
-        if (await dbContext.Students.AnyAsync(item => item.Id != id && item.Dpi == request.Dpi.Trim(), cancellationToken))
+        var dpiDigits = ContactNormalization.Digits(request.Dpi);
+        if (await dbContext.Students.AnyAsync(item =>
+                item.Id != id && item.Dpi.Replace(" ", "").Replace("-", "") == dpiDigits,
+                cancellationToken))
             throw new ConflictException("El DPI del alumno ya está registrado.");
         if (await dbContext.Students.AnyAsync(item => item.Id != id && item.Email == request.Email.Trim(), cancellationToken))
             throw new ConflictException("El correo del alumno ya está registrado.");
@@ -406,11 +486,19 @@ internal sealed class StudentService(
     {
         var errors = new Dictionary<string, string[]>();
         if (string.IsNullOrWhiteSpace(request.FullName)) errors["fullName"] = ["El nombre es obligatorio."];
+        if (request.BirthDate is null) errors["birthDate"] = ["La fecha de nacimiento es obligatoria."];
+        if (request.BirthDate > request.RegistrationDate) errors["birthDate"] = ["La fecha de nacimiento no puede ser posterior al registro."];
         if (string.IsNullOrWhiteSpace(request.StudentCardNumber)) errors["studentCardNumber"] = ["El carné es obligatorio."];
         if (string.IsNullOrWhiteSpace(request.Dpi)) errors["dpi"] = ["El DPI es obligatorio."];
+        else if (!ContactNormalization.IsValidCui(request.Dpi)) errors["dpi"] = ["El DPI debe contener los 13 dígitos del CUI."];
         if (string.IsNullOrWhiteSpace(request.ResidenceAddress)) errors["residenceAddress"] = ["La residencia es obligatoria."];
         if (string.IsNullOrWhiteSpace(request.Email) || !request.Email.Contains('@', StringComparison.Ordinal)) errors["email"] = ["El correo no es válido."];
         if (request.Semester <= 0) errors["semester"] = ["El semestre debe ser mayor que cero."];
+        if (string.IsNullOrWhiteSpace(request.StudyShift)) errors["studyShift"] = ["La jornada de estudio es obligatoria."];
+        else if (request.StudyShift is not ("Matutina" or "Vespertina" or "Nocturna")) errors["studyShift"] = ["Seleccione una jornada válida."];
+        if (!ContactNormalization.IsValidGuatemalaPhone(request.WorkPhone)) errors["workPhone"] = ["El teléfono de trabajo debe contener 8 dígitos o el prefijo +502."];
+        if (!ContactNormalization.IsValidGuatemalaPhone(request.MobilePhone)) errors["mobilePhone"] = ["El celular debe contener 8 dígitos o el prefijo +502."];
+        if (!ContactNormalization.IsValidGuatemalaPhone(request.HomePhone)) errors["homePhone"] = ["El teléfono residencial debe contener 8 dígitos o el prefijo +502."];
         if (errors.Count > 0) throw new ValidationException("Revise los datos del alumno.", errors);
     }
 
@@ -419,23 +507,32 @@ internal sealed class StudentService(
         student.FullName = request.FullName.Trim();
         student.NormalizedFullName = TextNormalization.Normalize(request.FullName);
         student.BirthDate = request.BirthDate;
-        student.AgeAtRegistration = request.AgeAtRegistration;
+        student.AgeAtRegistration = request.BirthDate is DateOnly birthDate
+            ? CalculateAge(birthDate, request.RegistrationDate)
+            : null;
         student.StudentCardNumber = request.StudentCardNumber.Trim();
-        student.Dpi = request.Dpi.Trim();
+        student.Dpi = ContactNormalization.Cui(request.Dpi)!;
         student.Semester = request.Semester;
         student.StudyShift = Clean(request.StudyShift);
         student.Workplace = Clean(request.Workplace);
-        student.WorkPhone = Clean(request.WorkPhone);
+        student.WorkPhone = ContactNormalization.GuatemalaPhone(request.WorkPhone);
         student.ImmediateSupervisor = Clean(request.ImmediateSupervisor);
         student.JobTitle = Clean(request.JobTitle);
         student.ResidenceAddress = request.ResidenceAddress.Trim();
-        student.MobilePhone = Clean(request.MobilePhone);
-        student.HomePhone = Clean(request.HomePhone);
+        student.MobilePhone = ContactNormalization.GuatemalaPhone(request.MobilePhone);
+        student.HomePhone = ContactNormalization.GuatemalaPhone(request.HomePhone);
         student.Email = request.Email.Trim();
         student.RegistrationDate = request.RegistrationDate;
     }
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static int CalculateAge(DateOnly birthDate, DateOnly referenceDate)
+    {
+        var age = referenceDate.Year - birthDate.Year;
+        if (referenceDate < birthDate.AddYears(age)) age--;
+        return age;
+    }
 
     private async Task<Dictionary<Guid, Guid?>> GetPhotoMapAsync(IEnumerable<Student> students, CancellationToken cancellationToken)
     {
@@ -467,9 +564,12 @@ internal sealed class StudentService(
         item.HomePhone,
         item.Email,
         item.RegistrationDate,
-        item.IsActive);
+        item.IsActive,
+        item.ConcurrencyToken);
 
-    private static EnrollmentApplicationDto Map(EnrollmentApplication item) => new(
+    private static EnrollmentApplicationDto Map(
+        EnrollmentApplication item,
+        IReadOnlyDictionary<Guid, bool>? requirementFlags = null) => new(
         item.Id,
         item.StudentId,
         item.Modality,
@@ -491,12 +591,17 @@ internal sealed class StudentService(
         item.ClinicCardIssuedDate,
         item.ClinicCardExpirationDate,
         item.ClinicCardDeliveredAtUtc,
-        item.Requirements.OrderBy(requirement => requirement.RequirementLabel).Select(Map).ToList());
+        item.Requirements.OrderBy(requirement => requirement.RequirementLabel)
+            .Select(requirement => Map(
+                requirement,
+                requirementFlags?.GetValueOrDefault(requirement.RequirementDefinitionId) ?? false))
+            .ToList());
 
-    private static StudentRequirementDto Map(StudentRequirement item) => new(
+    private static StudentRequirementDto Map(StudentRequirement item, bool isRequired = false) => new(
         item.Id,
         item.RequirementDefinitionId,
         item.RequirementLabel,
+        isRequired,
         item.Status,
         item.DocumentId,
         item.DataValue,

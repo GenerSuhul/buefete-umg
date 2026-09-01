@@ -61,7 +61,7 @@ public interface IActivityReportService
 
     Task<WeeklyReportDto> GenerateWeeklyReportAsync(DateOnly start, DateOnly end, CancellationToken cancellationToken);
 
-    Task<IReadOnlyList<WeeklyReportDto>> GetReportsAsync(CancellationToken cancellationToken);
+    Task<PagedResult<WeeklyReportDto>> GetReportsAsync(int page, int pageSize, CancellationToken cancellationToken);
 
     Task<WeeklyReportDto> GetReportAsync(Guid id, CancellationToken cancellationToken);
 

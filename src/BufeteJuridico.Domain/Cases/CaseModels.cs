@@ -53,7 +53,7 @@ public enum ReviewOutcome
     Approved = 2
 }
 
-public sealed class LegalCase : AuditableEntity
+public sealed class LegalCase : SoftDeletableEntity
 {
     public string CaseNumber { get; set; } = string.Empty;
 
@@ -231,7 +231,15 @@ public sealed class CasePresentation : AuditableEntity
 {
     public Guid LegalCaseId { get; set; }
 
+    public LegalCase LegalCase { get; set; } = null!;
+
     public Guid? MemorialId { get; set; }
+
+    public Memorial? Memorial { get; set; }
+
+    public Guid MemorialVersionId { get; set; }
+
+    public MemorialVersion MemorialVersion { get; set; } = null!;
 
     public DateTimeOffset PresentedAtUtc { get; set; }
 
@@ -245,6 +253,8 @@ public sealed class CasePresentation : AuditableEntity
 public sealed class CourtNotification : AuditableEntity
 {
     public Guid LegalCaseId { get; set; }
+
+    public LegalCase LegalCase { get; set; } = null!;
 
     public DateTimeOffset NotifiedAtUtc { get; set; }
 

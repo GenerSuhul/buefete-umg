@@ -1,3 +1,5 @@
+using BufeteJuridico.Application.Administration;
+using BufeteJuridico.Application.Authorization;
 using BufeteJuridico.Application.Cases;
 using BufeteJuridico.Application.Common;
 using BufeteJuridico.Domain.Cases;
@@ -7,7 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace BufeteJuridico.Api.Controllers;
 
 [Authorize]
-public sealed class CasesController(ICaseService service) : ApiV1ControllerBase
+public sealed class CasesController(ICaseService service, IDeletedRecordService deletedRecords) : ApiV1ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<PagedResult<CaseSummaryDto>>> GetAll(
@@ -27,6 +29,21 @@ public sealed class CasesController(ICaseService service) : ApiV1ControllerBase
     {
         var result = await service.OpenCaseAsync(request, cancellationToken);
         return Created($"/api/v1/cases/{result.Summary.Id}", result);
+    }
+
+    [HttpPut("{id:guid}")]
+    public async Task<ActionResult<CaseDetailDto>> Update(
+        Guid id,
+        UpdateCaseRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(await service.UpdateCaseAsync(id, request, cancellationToken));
+
+    [HttpDelete("{id:guid}")]
+    [Authorize(Policy = Permissions.RecordsDelete)]
+    public async Task<IActionResult> Delete(Guid id, DeleteRecordRequest request, CancellationToken cancellationToken)
+    {
+        await deletedRecords.DeleteAsync(DeletedRecordType.LegalCase, id, request.Reason, cancellationToken);
+        return NoContent();
     }
 
     [HttpPut("{caseId:guid}/requirements/{requirementId:guid}")]

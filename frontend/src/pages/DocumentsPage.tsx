@@ -1,25 +1,21 @@
 import {
-  Download,
-  ExternalLink,
   FileText,
   HardDriveUpload,
   ScanLine,
   Upload,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { FilterBar, Pagination } from "../components/domain/Shared";
-import { ScanWorkspace } from "../components/documents/ScanWorkspace";
+import { DocumentAcquisition } from "../components/documents/DocumentAcquisition";
 import {
   Badge,
   Button,
   Card,
+  DocumentViewer,
   ErrorState,
-  Field,
-  FilePicker,
   FileThumbnail,
   LoadingState,
-  Modal,
   PageHeader,
 } from "../components/ui";
 import { dataSource } from "../data/dataSource";
@@ -40,56 +36,62 @@ export function DocumentsPage() {
   const [searchParams] = useSearchParams();
   const queryHandled = useRef(false);
   const [search, setSearch] = useState("");
-  const [uploadOpen, setUploadOpen] = useState(false);
-  const [scanOpen, setScanOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [acquisitionOpen, setAcquisitionOpen] = useState(false);
   const [documentForm, setDocumentForm] = useState(initialDocumentForm);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [operationError, setOperationError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [previewDocument, setPreviewDocument] = useState<DocumentRecord | null>(
     null,
   );
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewHistory, setPreviewHistory] = useState<DocumentRecord[]>([]);
 
   const loader = useMemo(
-    () => () => dataSource.listDocuments({ search, pageSize: 100 }),
-    [search],
+    () => () => dataSource.listDocuments({ search, page, pageSize: 24 }),
+    [search, page],
   );
-  const { data, error, loading, reload } = useAsyncData(loader, [search]);
-  const contexts = useAsyncData(async () => {
-    const [clients, students, cases] = await Promise.all([
-      dataSource.listClients({ pageSize: 100 }),
-      dataSource.listStudents({ pageSize: 100 }),
-      dataSource.listCases({ pageSize: 100 }),
-    ]);
-    return {
-      Client: clients.items.map((item) => ({
-        id: item.id,
-        label: `${item.fullName} · ${item.receptionNumber}`,
-      })),
-      Student: students.items.map((item) => ({
-        id: item.id,
-        label: `${item.fullName} · ${item.studentCardNumber}`,
-      })),
-      LegalCase: cases.items.map((item) => ({
-        id: item.id,
-        label: `${item.caseNumber} · ${item.clientName}`,
-      })),
-    };
+  const { data, error, loading, reload } = useAsyncData(loader, [search, page]);
+  const loadContextOptions = useCallback(async (contextType: BaseContext, term: string, selectedId?: string) => {
+    const items = contextType === "Client"
+      ? (await dataSource.listClients({ search: term, pageSize: 20 })).items.map((item) => ({ value: item.id, label: `${item.fullName} · ${item.receptionNumber}` }))
+      : contextType === "Student"
+        ? (await dataSource.listStudents({ search: term, pageSize: 20 })).items.map((item) => ({ value: item.id, label: `${item.fullName} · ${item.studentCardNumber}` }))
+        : (await dataSource.listCases({ search: term, pageSize: 20 })).items.map((item) => ({ value: item.id, label: `${item.caseNumber} · ${item.clientName}` }));
+    if (!selectedId || items.some((item) => item.value === selectedId)) return items;
+    try {
+      if (contextType === "Client") {
+        const selected = (await dataSource.getClient(selectedId)).client;
+        return [{ value: selected.id, label: `${selected.fullName} · ${selected.receptionNumber}` }, ...items];
+      }
+      if (contextType === "Student") {
+        const selected = (await dataSource.getStudent(selectedId)).student;
+        return [{ value: selected.id, label: `${selected.fullName} · ${selected.studentCardNumber}` }, ...items];
+      }
+      const selected = (await dataSource.getCase(selectedId)).summary;
+      return [{ value: selected.id, label: `${selected.caseNumber} · ${selected.clientName}` }, ...items];
+    } catch {
+      return items;
+    }
+  }, []);
+  const loadCompleteHistory = useCallback(async (document: DocumentRecord) => {
+    const first = await dataSource.listDocumentHistory(
+      document.contextType,
+      document.contextId,
+      { label: document.label, page: 1, pageSize: 100 },
+    );
+    if (first.totalPages <= 1) return first.items;
+    const remaining = await Promise.all(
+      Array.from({ length: first.totalPages - 1 }, (_, index) =>
+        dataSource.listDocumentHistory(document.contextType, document.contextId, {
+          label: document.label,
+          page: index + 2,
+          pageSize: 100,
+        }),
+      ),
+    );
+    return [first, ...remaining].flatMap((pageResult) => pageResult.items);
   }, []);
 
   useEffect(() => {
-    if (!documentForm.contextId && contexts.data?.[documentForm.contextType][0])
-      setDocumentForm((current) => ({
-        ...current,
-        contextId: contexts.data![current.contextType][0].id,
-      }));
-  }, [contexts.data, documentForm.contextId, documentForm.contextType]);
-
-  useEffect(() => {
-    if (queryHandled.current || !contexts.data) return;
+    if (queryHandled.current) return;
     const contextType = searchParams.get("contextType") as BaseContext | null;
     const contextId = searchParams.get("contextId");
     const mode = searchParams.get("mode");
@@ -99,164 +101,26 @@ export function DocumentsPage() {
       ["Client", "Student", "LegalCase"].includes(contextType)
     ) {
       setDocumentForm({ ...initialDocumentForm, contextType, contextId });
-      if (mode === "upload") setUploadOpen(true);
-      if (mode === "scan") setScanOpen(true);
+      if (["upload", "scan", "acquire"].includes(mode ?? "")) setAcquisitionOpen(true);
     }
     queryHandled.current = true;
-  }, [contexts.data, searchParams]);
+  }, [searchParams]);
 
-  useEffect(
-    () => () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    },
-    [previewUrl],
-  );
-
-  const setContextType = (contextType: BaseContext) => {
-    setDocumentForm((current) => ({
-      ...current,
-      contextType,
-      contextId: contexts.data?.[contextType][0]?.id ?? "",
-      replaceDocumentId: "",
-    }));
-  };
-
-  const openUpload = () => {
+  const openAcquisition = () => {
     setDocumentForm({
       ...initialDocumentForm,
-      contextId: contexts.data?.Client[0]?.id ?? "",
+      contextId: "",
     });
-    setSelectedFile(null);
-    setOperationError(null);
-    setUploadOpen(true);
-  };
-
-  const openScan = () => {
-    setDocumentForm({
-      ...initialDocumentForm,
-      contextId: contexts.data?.Client[0]?.id ?? "",
-    });
-    setOperationError(null);
-    setScanOpen(true);
-  };
-
-  const upload = async () => {
-    if (!selectedFile || !documentForm.contextId || !documentForm.label.trim())
-      return;
-    setBusy(true);
-    setOperationError(null);
-    try {
-      await dataSource.uploadDocument({
-        file: selectedFile,
-        contextType: documentForm.contextType,
-        contextId: documentForm.contextId,
-        label: documentForm.label.trim(),
-        replaceDocumentId: documentForm.replaceDocumentId || null,
-      });
-      setUploadOpen(false);
-      setNotice("Documento guardado.");
-      await reload();
-    } catch (caught) {
-      setOperationError(
-        caught instanceof Error
-          ? caught.message
-          : "No se pudo cargar el documento.",
-      );
-    } finally {
-      setBusy(false);
-    }
+    setAcquisitionOpen(true);
   };
 
   const openPreview = async (document: DocumentRecord) => {
     setPreviewDocument(document);
-    setPreviewLoading(true);
-    setOperationError(null);
     try {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      const access = await dataSource.getDocumentReadAccess(document.id);
-      if (access.url) setPreviewUrl(access.url);
-      else {
-        const blob = await dataSource.downloadDocument(document.id);
-        setPreviewUrl(URL.createObjectURL(blob));
-      }
-    } catch (caught) {
-      setOperationError(
-        caught instanceof Error
-          ? caught.message
-          : "No se pudo abrir el documento.",
-      );
-    } finally {
-      setPreviewLoading(false);
-    }
+      const history = await loadCompleteHistory(document);
+      setPreviewHistory(history);
+    } catch { setPreviewHistory([]); }
   };
-
-  const versions =
-    data?.items.filter(
-      (item) =>
-        item.contextType === documentForm.contextType &&
-        item.contextId === documentForm.contextId,
-    ) ?? [];
-  const contextFields = (
-    <div className="form-grid">
-      <Field label="Tipo de registro">
-        <select
-          value={documentForm.contextType}
-          onChange={(event) =>
-            setContextType(event.target.value as BaseContext)
-          }
-        >
-          <option value="Client">Cliente</option>
-          <option value="Student">Alumno</option>
-          <option value="LegalCase">Expediente</option>
-        </select>
-      </Field>
-      <Field label="Registro relacionado">
-        <select
-          value={documentForm.contextId}
-          onChange={(event) =>
-            setDocumentForm({
-              ...documentForm,
-              contextId: event.target.value,
-              replaceDocumentId: "",
-            })
-          }
-        >
-          {contexts.data?.[documentForm.contextType].map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.label}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field label="Etiqueta">
-        <input
-          value={documentForm.label}
-          onChange={(event) =>
-            setDocumentForm({ ...documentForm, label: event.target.value })
-          }
-          placeholder="Ej. DPI o certificación de nacimiento"
-        />
-      </Field>
-      <Field label="Nueva versión de">
-        <select
-          value={documentForm.replaceDocumentId}
-          onChange={(event) =>
-            setDocumentForm({
-              ...documentForm,
-              replaceDocumentId: event.target.value,
-            })
-          }
-        >
-          <option value="">Documento nuevo</option>
-          {versions.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.label} · v{item.versionNumber}
-            </option>
-          ))}
-        </select>
-      </Field>
-    </div>
-  );
 
   return (
     <>
@@ -265,26 +129,12 @@ export function DocumentsPage() {
         title="Documentos"
         description="Carga, escaneo, versiones y consulta segura en almacenamiento privado."
         actions={
-          <>
-            <Button variant="secondary" onClick={openScan}>
-              <ScanLine size={18} />
-              Escanear
-            </Button>
-            <Button onClick={openUpload}>
-              <Upload size={18} />
-              Subir archivo
-            </Button>
-          </>
+          <Button onClick={openAcquisition}>
+            <Upload size={18} />
+            Adjuntar documento
+          </Button>
         }
       />
-      {notice && (
-        <div className="operation-notice" role="status">
-          <span>{notice}</span>
-          <button type="button" onClick={() => setNotice(null)}>
-            Cerrar
-          </button>
-        </div>
-      )}
       <div className="document-kpis">
         <Card>
           <span>
@@ -324,7 +174,7 @@ export function DocumentsPage() {
       <Card className="directory-card">
         <FilterBar
           value={search}
-          onChange={setSearch}
+          onChange={(value) => { setSearch(value); setPage(1); }}
           placeholder="Buscar por nombre o etiqueta…"
         />
         {loading ? (
@@ -386,6 +236,7 @@ export function DocumentsPage() {
               page={data.page}
               totalPages={data.totalPages}
               totalCount={data.totalCount}
+              onPageChange={setPage}
             />
           </>
         ) : (
@@ -393,133 +244,50 @@ export function DocumentsPage() {
         )}
       </Card>
 
-      <Modal
-        size="lg"
-        open={uploadOpen}
-        onClose={() => !busy && setUploadOpen(false)}
-        title="Subir documento"
-        description="Seleccione un PDF o una imagen de hasta 25 MB."
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              disabled={busy}
-              onClick={() => setUploadOpen(false)}
-            >
-              Cancelar
-            </Button>
-            <Button
-              disabled={
-                busy ||
-                !selectedFile ||
-                !documentForm.contextId ||
-                !documentForm.label.trim()
-              }
-              onClick={upload}
-            >
-              {busy ? "Subiendo…" : "Guardar documento"}
-            </Button>
-          </>
-        }
-      >
-        {operationError && (
-          <div className="form-error" role="alert">
-            {operationError}
-          </div>
-        )}
-        <FilePicker
-          label="Seleccionar documento"
-          hint="PDF, JPG, PNG o WEBP · máximo 25 MB"
-          file={selectedFile}
-          onChange={setSelectedFile}
-          required
-        />
-        {contextFields}
-      </Modal>
-
-      <ScanWorkspace
-        open={scanOpen}
-        onClose={() => setScanOpen(false)}
-        contexts={contexts.data ?? undefined}
+      <DocumentAcquisition
+        open={acquisitionOpen}
+        onClose={() => setAcquisitionOpen(false)}
+        loadContexts={loadContextOptions}
         initialForm={documentForm}
         contextLocked={!!searchParams.get("contextId")}
-        versions={versions}
         onCompleted={async () => {
-          setNotice("Documento digitalizado y guardado.");
           await reload();
         }}
       />
 
-      <Modal
-        size="xl"
+      <DocumentViewer
         open={!!previewDocument}
+        documentId={previewDocument?.id ?? null}
         onClose={() => {
           setPreviewDocument(null);
-          if (previewUrl) {
-            URL.revokeObjectURL(previewUrl);
-            setPreviewUrl(null);
-          }
+          setPreviewHistory([]);
         }}
-        title={previewDocument?.label ?? "Documento"}
+        label={previewDocument?.label ?? "Documento"}
         description={
           previewDocument
             ? `${previewDocument.originalFileName} · ${formatBytes(previewDocument.sizeBytes)}`
             : ""
         }
-        footer={
-          <>
-            {previewUrl && (
-              <a
-                className="button button--secondary"
-                href={previewUrl}
-                download={previewDocument?.originalFileName}
-              >
-                <Download size={16} />
-                Descargar
-              </a>
-            )}
-            <Button
-              variant="secondary"
-              onClick={() => setPreviewDocument(null)}
-            >
-              Cerrar
-            </Button>
-          </>
-        }
       >
-        {previewLoading ? (
-          <LoadingState />
-        ) : operationError ? (
-          <div className="form-error">{operationError}</div>
-        ) : (
-          previewUrl &&
-          previewDocument &&
-          (previewDocument.contentType.startsWith("image/") ? (
-            <img
-              className="document-preview"
-              src={previewUrl}
-              alt={previewDocument.label}
-            />
-          ) : (
-            <iframe
-              className="document-preview-frame"
-              src={previewUrl}
-              title={previewDocument.label}
-            />
-          ))
-        )}
-        {previewUrl && (
-          <a
-            className="document-open-link"
-            href={previewUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
-            <ExternalLink size={15} />
-            Abrir en otra pestaña
-          </a>
-        )}
-      </Modal>
+        {previewHistory.length > 1 ? (
+          <div className="document-version-history" aria-label="Historial de versiones">
+            <strong>Historial de versiones</strong>
+            {[...previewHistory]
+              .sort((left, right) => right.versionNumber - left.versionNumber)
+              .map((version) => (
+                <Button
+                  key={version.id}
+                  variant={version.id === previewDocument?.id ? "secondary" : "ghost"}
+                  size="sm"
+                  disabled={version.id === previewDocument?.id}
+                  onClick={() => openPreview(version)}
+                >
+                  v{version.versionNumber} · {version.isCurrent ? "Vigente" : formatDateTime(version.createdAtUtc)}
+                </Button>
+              ))}
+          </div>
+        ) : null}
+      </DocumentViewer>
     </>
   );
 }

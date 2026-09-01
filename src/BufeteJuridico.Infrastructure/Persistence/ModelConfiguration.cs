@@ -16,6 +16,7 @@ internal static class ModelConfiguration
 {
     public static void Configure(ModelBuilder modelBuilder)
     {
+        modelBuilder.HasPostgresExtension("pg_trgm");
         ConfigureIdentity(modelBuilder);
         ConfigureDocuments(modelBuilder);
         ConfigureClients(modelBuilder);
@@ -24,6 +25,22 @@ internal static class ModelConfiguration
         ConfigureCases(modelBuilder);
         ConfigureOperations(modelBuilder);
         ConfigureAudit(modelBuilder);
+
+        modelBuilder.Entity<Client>().HasQueryFilter(item => item.DeletedAtUtc == null);
+        modelBuilder.Entity<Student>().HasQueryFilter(item => item.DeletedAtUtc == null);
+        modelBuilder.Entity<LegalCase>().HasQueryFilter(item => item.DeletedAtUtc == null);
+        modelBuilder.Entity<IncomeDeclaration>().HasQueryFilter(item => item.Client.DeletedAtUtc == null);
+        modelBuilder.Entity<EnrollmentApplication>().HasQueryFilter(item => item.Student.DeletedAtUtc == null);
+        modelBuilder.Entity<StudentRequirement>().HasQueryFilter(item => item.EnrollmentApplication.Student.DeletedAtUtc == null);
+        modelBuilder.Entity<CaseRequirement>().HasQueryFilter(item => item.LegalCase.DeletedAtUtc == null);
+        modelBuilder.Entity<CaseAssignment>().HasQueryFilter(item => item.LegalCase.DeletedAtUtc == null && item.Student.DeletedAtUtc == null);
+        modelBuilder.Entity<Counterparty>().HasQueryFilter(item => item.LegalCase.DeletedAtUtc == null);
+        modelBuilder.Entity<TimelineEntry>().HasQueryFilter(item => item.LegalCase.DeletedAtUtc == null);
+        modelBuilder.Entity<Memorial>().HasQueryFilter(item => item.LegalCase.DeletedAtUtc == null);
+        modelBuilder.Entity<MemorialVersion>().HasQueryFilter(item => item.Memorial.LegalCase.DeletedAtUtc == null);
+        modelBuilder.Entity<MemorialReview>().HasQueryFilter(item => item.MemorialVersion.Memorial.LegalCase.DeletedAtUtc == null);
+        modelBuilder.Entity<CasePresentation>().HasQueryFilter(item => item.LegalCase.DeletedAtUtc == null);
+        modelBuilder.Entity<CourtNotification>().HasQueryFilter(item => item.LegalCase.DeletedAtUtc == null);
 
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
@@ -111,8 +128,13 @@ internal static class ModelConfiguration
             entity.Property(item => item.ContextType).HasConversion<string>().HasMaxLength(50);
             entity.HasIndex(item => item.StorageKey).IsUnique();
             entity.HasIndex(item => new { item.ContextType, item.ContextId, item.Label, item.IsCurrent });
+            entity.HasIndex(item => new { item.ContextType, item.ContextId, item.Label })
+                .IsUnique()
+                .HasFilter("\"IsCurrent\" = TRUE AND \"DeletedAtUtc\" IS NULL AND \"ContextType\" = 'CaseRequirement'");
             entity.HasIndex(item => item.Sha256);
             entity.HasIndex(item => item.PageCount);
+            entity.HasIndex(item => item.DeletionBatchId);
+            entity.HasOne<DocumentRecord>().WithMany().HasForeignKey(item => item.PreviousVersionId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<ScanSession>(entity =>
@@ -164,9 +186,14 @@ internal static class ModelConfiguration
             entity.Property(item => item.ClaimedAgainstPersonName).HasMaxLength(200);
             entity.Property(item => item.ClaimedAgainstPersonAddress).HasMaxLength(500);
             entity.Property(item => item.SalaryAmount).HasPrecision(14, 2);
+            entity.Property(item => item.DeletionReason).HasMaxLength(500);
             entity.HasIndex(item => item.ReceptionNumber).IsUnique();
-            entity.HasIndex(item => item.NormalizedFullName);
+            entity.HasIndex(item => item.NormalizedFullName)
+                .HasMethod("gin")
+                .HasOperators("gin_trgm_ops")
+                .HasFilter("\"DeletedAtUtc\" IS NULL");
             entity.HasIndex(item => item.Dpi).IsUnique();
+            entity.HasIndex(item => item.DeletedAtUtc);
         });
 
         modelBuilder.Entity<IncomeDeclaration>(entity =>
@@ -189,11 +216,17 @@ internal static class ModelConfiguration
             entity.Property(item => item.StudentCardNumber).HasMaxLength(50);
             entity.Property(item => item.Dpi).HasMaxLength(30);
             entity.Property(item => item.Email).HasMaxLength(254);
-            entity.HasIndex(item => item.NormalizedFullName);
+            entity.Property(item => item.DeletionReason).HasMaxLength(500);
+            entity.HasIndex(item => item.NormalizedFullName)
+                .HasMethod("gin")
+                .HasOperators("gin_trgm_ops")
+                .HasFilter("\"DeletedAtUtc\" IS NULL");
             entity.HasIndex(item => item.StudentCardNumber).IsUnique();
             entity.HasIndex(item => item.Dpi).IsUnique();
             entity.HasIndex(item => item.Email).IsUnique();
             entity.HasIndex(item => item.UserAccountId).IsUnique();
+            entity.HasIndex(item => item.DeletedAtUtc);
+            entity.HasOne<UserAccount>().WithMany().HasForeignKey(item => item.UserAccountId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<EnrollmentApplication>(entity =>
@@ -247,10 +280,12 @@ internal static class ModelConfiguration
             entity.Property(item => item.CaseNumber).HasMaxLength(50);
             entity.Property(item => item.Status).HasConversion<string>().HasMaxLength(40);
             entity.Property(item => item.Stage).HasMaxLength(120);
+            entity.Property(item => item.DeletionReason).HasMaxLength(500);
             entity.HasIndex(item => item.CaseNumber).IsUnique();
             entity.HasIndex(item => new { item.ClientId, item.Status });
             entity.HasIndex(item => new { item.Status, item.ProcessTypeId });
             entity.HasIndex(item => new { item.Status, item.RetentionStartsAtUtc });
+            entity.HasIndex(item => item.DeletedAtUtc);
             entity.HasOne(item => item.Client).WithMany().HasForeignKey(item => item.ClientId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(item => item.ProcessType).WithMany().HasForeignKey(item => item.ProcessTypeId).OnDelete(DeleteBehavior.Restrict);
         });
@@ -321,12 +356,17 @@ internal static class ModelConfiguration
             entity.ToTable("case_presentations");
             entity.Property(item => item.Result).HasMaxLength(500);
             entity.HasIndex(item => new { item.LegalCaseId, item.PresentedAtUtc });
+            entity.HasIndex(item => item.MemorialVersionId);
+            entity.HasOne(item => item.LegalCase).WithMany().HasForeignKey(item => item.LegalCaseId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(item => item.Memorial).WithMany().HasForeignKey(item => item.MemorialId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(item => item.MemorialVersion).WithMany().HasForeignKey(item => item.MemorialVersionId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<CourtNotification>(entity =>
         {
             entity.ToTable("court_notifications");
             entity.HasIndex(item => new { item.LegalCaseId, item.NotifiedAtUtc });
+            entity.HasOne(item => item.LegalCase).WithMany().HasForeignKey(item => item.LegalCaseId).OnDelete(DeleteBehavior.Restrict);
         });
     }
 
@@ -352,6 +392,7 @@ internal static class ModelConfiguration
             entity.ToTable("report_activities");
             entity.HasIndex(item => new { item.WeeklyReportId, item.SecretariatActivityId }).IsUnique();
             entity.HasOne(item => item.WeeklyReport).WithMany(item => item.Activities).HasForeignKey(item => item.WeeklyReportId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<SecretariatActivity>().WithMany().HasForeignKey(item => item.SecretariatActivityId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<EmailDelivery>(entity =>

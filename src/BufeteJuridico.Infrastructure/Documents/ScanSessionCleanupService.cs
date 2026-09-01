@@ -49,7 +49,7 @@ internal sealed class ScanSessionCleanupService(
             .Include(item => item.Pages)
             .Where(item =>
                 ((item.Status == ScanSessionStatus.Created || item.Status == ScanSessionStatus.Captured) && item.ExpiresAtUtc <= now) ||
-                ((item.Status == ScanSessionStatus.Cancelled || item.Status == ScanSessionStatus.Failed || item.Status == ScanSessionStatus.Expired) &&
+                ((item.Status == ScanSessionStatus.Completed || item.Status == ScanSessionStatus.Cancelled || item.Status == ScanSessionStatus.Failed || item.Status == ScanSessionStatus.Expired) &&
                  (item.StagedStorageKey != null || item.Pages.Any(page => page.OriginalStorageKey != ""))))
             .OrderBy(item => item.ExpiresAtUtc)
             .Take(100)
@@ -61,15 +61,32 @@ internal sealed class ScanSessionCleanupService(
 
         foreach (var session in sessions.Where(item => !string.IsNullOrWhiteSpace(item.StagedStorageKey)))
         {
-            await fileStorage.DeleteAsync(session.StagedStorageKey!, cancellationToken);
-            session.StagedStorageKey = null;
+            try
+            {
+                await fileStorage.DeleteAsync(session.StagedStorageKey!, cancellationToken);
+                session.StagedStorageKey = null;
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "No se pudo limpiar el objeto temporal principal de la sesión {ScanSessionId}. Se reintentará.", session.Id);
+            }
         }
 
-        foreach (var session in sessions.Where(item => item.Status is ScanSessionStatus.Cancelled or ScanSessionStatus.Failed or ScanSessionStatus.Expired))
+        foreach (var session in sessions.Where(item => item.Status is ScanSessionStatus.Completed or ScanSessionStatus.Cancelled or ScanSessionStatus.Failed or ScanSessionStatus.Expired))
         {
             foreach (var storageKey in session.Pages.Select(page => page.OriginalStorageKey).Where(key => !string.IsNullOrWhiteSpace(key)).Distinct())
-                await fileStorage.DeleteAsync(storageKey, cancellationToken);
-            foreach (var page in session.Pages) page.OriginalStorageKey = string.Empty;
+            {
+                try
+                {
+                    await fileStorage.DeleteAsync(storageKey, cancellationToken);
+                    foreach (var page in session.Pages.Where(page => page.OriginalStorageKey == storageKey))
+                        page.OriginalStorageKey = string.Empty;
+                }
+                catch (Exception exception)
+                {
+                    logger.LogWarning(exception, "No se pudo limpiar el objeto temporal {StorageKey} de la sesión {ScanSessionId}. Se reintentará.", storageKey, session.Id);
+                }
+            }
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);

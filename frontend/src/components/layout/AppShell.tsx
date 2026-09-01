@@ -16,17 +16,19 @@ import {
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
+  Trash2,
   UserRoundCog,
   UsersRound,
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { dataSource } from "../../data/dataSource";
 import { useAsyncData } from "../../hooks/useAsyncData";
 import type { SearchResult } from "../../types/domain";
+import { translate } from "../../utils/format";
 import {
   Avatar,
   Badge,
@@ -36,6 +38,8 @@ import {
   IconButton,
   Modal,
 } from "../ui";
+import { motion, type MotionHandle } from "../ui/motion/motion";
+import { useNotify } from "../ui/Feedback";
 
 interface NavigationItem {
   to: string;
@@ -144,6 +148,13 @@ const navigationGroups: NavigationGroup[] = [
         permissions: ["audit.read"],
       },
       {
+        to: "/eliminados",
+        label: "Eliminados",
+        description: "Restauración de registros",
+        icon: Trash2,
+        permissions: ["records.deleted.read"],
+      },
+      {
         to: "/retencion",
         label: "Retención",
         description: "Vista previa de depuración",
@@ -155,6 +166,7 @@ const navigationGroups: NavigationGroup[] = [
 ];
 
 export function AppShell() {
+  const pageRef = useRef<HTMLElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
@@ -183,9 +195,55 @@ export function AppShell() {
     hasAnyPermission(["cases.assigned.read"]) &&
     !hasAnyPermission(["cases.read"]);
   const canGlobalSearch = hasAnyPermission(["clients.read"]);
+  const [platformStatus, setPlatformStatus] = useState<
+    "checking" | "available" | "unavailable"
+  >(dataSource.mode === "mock" ? "available" : "checking");
+
+  useEffect(() => {
+    if (dataSource.mode === "mock") return;
+    let active = true;
+    let requestInProgress = false;
+
+    const checkPlatform = async () => {
+      if (requestInProgress) return;
+      if (!navigator.onLine) {
+        if (active) setPlatformStatus("unavailable");
+        return;
+      }
+      requestInProgress = true;
+      try {
+        const health = await dataSource.getPlatformHealth();
+        if (active)
+          setPlatformStatus(
+            health.status === "Healthy" ? "available" : "unavailable",
+          );
+      } catch {
+        if (active) setPlatformStatus("unavailable");
+      } finally {
+        requestInProgress = false;
+      }
+    };
+
+    void checkPlatform();
+    const interval = window.setInterval(() => void checkPlatform(), 30_000);
+    window.addEventListener("online", checkPlatform);
+    const markOffline = () => setPlatformStatus("unavailable");
+    window.addEventListener("offline", markOffline);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("online", checkPlatform);
+      window.removeEventListener("offline", markOffline);
+    };
+  }, []);
 
   useEffect(() => {
     setMobileOpen(false);
+    let animation: MotionHandle | null = null;
+    const frame = window.requestAnimationFrame(() => {
+      if (pageRef.current) animation = motion.routeEnter(pageRef.current);
+    });
+    return () => { window.cancelAnimationFrame(frame); animation?.cancel(); };
   }, [location.pathname]);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -295,11 +353,19 @@ export function AppShell() {
             })}
           </nav>
           <div className="sidebar-footer">
-            <span className="sidebar-footer__mode">
+            <span
+              className={`sidebar-footer__mode sidebar-footer__mode--${platformStatus}`}
+              role="status"
+              aria-live="polite"
+            >
               <i />
               {dataSource.mode === "mock"
                 ? "Datos de demostración"
-                : "Conexión activa"}
+                : platformStatus === "available"
+                  ? "Servicios disponibles"
+                  : platformStatus === "unavailable"
+                    ? "Servicio no disponible"
+                    : "Verificando servicios"}
             </span>
             <div>
               <Avatar
@@ -308,7 +374,7 @@ export function AppShell() {
               />
               <span>
                 <strong>{user?.fullName}</strong>
-                <small>{user?.roles.join(", ")}</small>
+                <small>{user?.roles.map(translate).join(", ")}</small>
               </span>
               <IconButton label="Cerrar sesión" onClick={() => void logout()}>
                 <LogOut size={17} />
@@ -370,9 +436,7 @@ export function AppShell() {
               <span className="profile-trigger__copy">
                 <strong>{user?.fullName ?? user?.username}</strong>
                 <small>
-                  {user?.roles[0] === "AdministradorGeneral"
-                    ? "Administrador"
-                    : user?.roles[0]}
+                  {user?.roles[0] ? translate(user.roles[0]) : "Sin rol"}
                 </small>
               </span>
               <ChevronDown size={15} />
@@ -414,7 +478,7 @@ export function AppShell() {
             )}
           </div>
         </header>
-        <main className="page-content">
+        <main className="page-content" ref={pageRef}>
           <Outlet />
         </main>
         {canGlobalSearch && (
@@ -441,6 +505,7 @@ function AccountDialog({
 }) {
   const { user, loading, updateProfile, updatePhoto, changePassword, logout } =
     useAuth();
+  const notify = useNotify();
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
@@ -448,7 +513,6 @@ function AccountDialog({
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open || !user) return;
@@ -456,7 +520,6 @@ function AccountDialog({
     setEmail(user.email);
     setPhoto(null);
     setError(null);
-    setNotice(null);
     setCurrentPassword("");
     setNewPassword("");
     setConfirmPassword("");
@@ -464,12 +527,17 @@ function AccountDialog({
 
   const saveProfile = async () => {
     setError(null);
-    setNotice(null);
     try {
-      await updateProfile({ fullName: fullName.trim(), email: email.trim() });
-      if (photo) await updatePhoto(photo);
+      await notify.track((async () => {
+        await updateProfile({ fullName: fullName.trim(), email: email.trim() });
+        if (photo) await updatePhoto(photo);
+      })(), {
+        loading: { title: "Guardando perfil…" },
+        success: { title: "Perfil actualizado", message: "Tus datos personales fueron guardados." },
+        error: { title: "No se pudo actualizar el perfil" },
+      });
       setPhoto(null);
-      setNotice("Perfil actualizado correctamente.");
+      onClose();
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -481,17 +549,13 @@ function AccountDialog({
 
   const savePassword = async () => {
     setError(null);
-    setNotice(null);
     if (newPassword !== confirmPassword) {
       setError("La confirmación de la contraseña no coincide.");
       return;
     }
     try {
       await changePassword(currentPassword, newPassword);
-      setNotice(
-        "Contraseña actualizada. Por seguridad debe iniciar sesión nuevamente.",
-      );
-      setTimeout(() => void logout(), 900);
+      await logout({ silent: true });
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -527,11 +591,6 @@ function AccountDialog({
           {error}
         </div>
       )}
-      {notice && (
-        <div className="operation-notice" role="status">
-          {notice}
-        </div>
-      )}
       <div className="account-profile-summary">
         <Avatar
           name={user?.fullName ?? "Usuario UMG"}
@@ -540,7 +599,7 @@ function AccountDialog({
         />
         <div>
           <strong>{user?.username}</strong>
-          <span>{user?.roles.join(", ")}</span>
+          <span>{user?.roles.map(translate).join(", ")}</span>
         </div>
       </div>
       <div className="form-grid">
@@ -666,6 +725,7 @@ function getBreadcrumb(pathname: string) {
     "/usuarios": { section: "Administración", page: "Usuarios y permisos" },
     "/catalogos": { section: "Administración", page: "Catálogos" },
     "/auditoria": { section: "Administración", page: "Auditoría" },
+    "/eliminados": { section: "Administración", page: "Eliminados" },
     "/retencion": { section: "Administración", page: "Retención y depuración" },
   };
   return (
@@ -681,11 +741,16 @@ function SearchOverlay({
   onClose: () => void;
 }) {
   const [term, setTerm] = useState("");
+  const [debouncedTerm, setDebouncedTerm] = useState("");
   const navigate = useNavigate();
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedTerm(term.trim()), 250);
+    return () => window.clearTimeout(timeoutId);
+  }, [term]);
   const loader = useMemo(
     () => () =>
-      term.trim().length >= 2
-        ? dataSource.search(term.trim())
+      debouncedTerm.length >= 2
+        ? dataSource.search(debouncedTerm)
         : Promise.resolve({
             items: [] as SearchResult[],
             page: 1,
@@ -693,9 +758,9 @@ function SearchOverlay({
             totalCount: 0,
             totalPages: 0,
           }),
-    [term],
+    [debouncedTerm],
   );
-  const { data, loading } = useAsyncData(loader, [term]);
+  const { data, loading } = useAsyncData(loader, [debouncedTerm]);
   if (!open) return null;
   const openResult = (result: SearchResult) => {
     onClose();

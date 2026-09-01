@@ -31,7 +31,8 @@ public sealed record ClientDto(
     DateOnly ReceptionDate,
     Guid? SignatureDocumentId,
     bool IsActive,
-    DateTimeOffset CreatedAtUtc);
+    DateTimeOffset CreatedAtUtc,
+    Guid ConcurrencyToken);
 
 public sealed record SaveClientRequest(
     string FullName,
@@ -58,7 +59,8 @@ public sealed record SaveClientRequest(
     string? ClaimedAgainstPersonAddress,
     string ReceptionPlace,
     DateOnly ReceptionDate,
-    Guid? SignatureDocumentId);
+    Guid? SignatureDocumentId,
+    Guid? ConcurrencyToken = null);
 
 public sealed record IncomeDeclarationDto(
     Guid Id,

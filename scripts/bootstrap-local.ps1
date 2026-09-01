@@ -48,7 +48,7 @@ if (-not $values.Contains('POSTGRES_USER')) { $values['POSTGRES_USER'] = 'bufete
 if (-not $values.Contains('POSTGRES_PASSWORD')) { $values['POSTGRES_PASSWORD'] = New-RandomSecret 32 }
 if (-not $values.Contains('POSTGRES_PORT')) { $values['POSTGRES_PORT'] = '55432' }
 
-$connectionString = 'Host=127.0.0.1;Port={0};Database={1};Username={2};Password={3};Maximum Pool Size=50;Connection Idle Lifetime=300;Timeout=15;Command Timeout=30' -f `
+$connectionString = 'Host=127.0.0.1;Port={0};Database={1};Username={2};Password={3};Maximum Pool Size=30;Minimum Pool Size=2;Connection Idle Lifetime=300;Connection Pruning Interval=10;Keepalive=30;Timeout=15;Command Timeout=30' -f `
     $values['POSTGRES_PORT'], `
     $values['POSTGRES_DB'], `
     $values['POSTGRES_USER'], `
@@ -116,4 +116,5 @@ $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllLines($environmentPath, $lines, $utf8WithoutBom)
 
 Write-Host 'Configuración local creada en .env.'
+Write-Host 'La API carga este archivo automáticamente cuando se ejecuta en Development.'
 Write-Host 'Las credenciales no se imprimen. Abra .env localmente para consultarlas.'

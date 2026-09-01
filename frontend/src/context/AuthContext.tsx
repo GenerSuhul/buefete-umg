@@ -1,4 +1,6 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useNotify } from '../components/ui/Feedback';
+import { readAuthSession, updateAuthSessionUser } from '../data/authSession';
 import { dataSource } from '../data/dataSource';
 import type { AuthenticatedUser } from '../types/domain';
 
@@ -6,7 +8,7 @@ interface AuthContextValue {
   user: AuthenticatedUser | null;
   loading: boolean;
   login(email: string, password: string): Promise<void>;
-  logout(): Promise<void>;
+  logout(options?: { silent?: boolean }): Promise<void>;
   updateProfile(input: { fullName: string; email: string }): Promise<void>;
   updatePhoto(file: File): Promise<void>;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
@@ -25,18 +27,23 @@ const mockUser: AuthenticatedUser = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const stored = sessionStorage.getItem('bufete_umg_session');
-  const storedUser = stored ? (JSON.parse(stored) as { user?: AuthenticatedUser }).user ?? null : null;
+  const notify = useNotify();
+  const storedUser = readAuthSession()?.user ?? null;
   const [user, setUser] = useState<AuthenticatedUser | null>(dataSource.mode === 'mock' ? mockUser : storedUser);
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    const sessionExpired = () => {
+      setUser(null);
+      notify.warning({ title: 'Tu sesión finalizó', message: 'Vuelve a iniciar sesión para continuar.', duration: 8000 });
+    };
+    window.addEventListener('bufete:session-expired', sessionExpired);
+    return () => window.removeEventListener('bufete:session-expired', sessionExpired);
+  }, [notify]);
+
   const applyUserSummary = (summary: { fullName: string; email: string; photoDocumentId: string | null }) => {
     setUser((current) => current ? { ...current, ...summary } : current);
-    const raw = sessionStorage.getItem('bufete_umg_session');
-    if (!raw) return;
-    const session = JSON.parse(raw) as { user?: AuthenticatedUser };
-    if (session.user) session.user = { ...session.user, ...summary };
-    sessionStorage.setItem('bufete_umg_session', JSON.stringify(session));
+    updateAuthSessionUser(summary);
   };
 
   const value = useMemo<AuthContextValue>(() => ({
@@ -51,11 +58,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       }
     },
-    async logout() {
+    async logout(options) {
       setLoading(true);
       try {
         await dataSource.logout();
-        setUser(dataSource.mode === 'mock' ? mockUser : null);
+        setUser(null);
+        if (!options?.silent) notify.info({ title: 'Sesión cerrada', message: 'Tu sesión finalizó de forma segura.' });
       } finally {
         setLoading(false);
       }
@@ -75,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try { await dataSource.changeOwnPassword(currentPassword, newPassword); }
       finally { setLoading(false); }
     },
-  }), [loading, user]);
+  }), [loading, notify, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -153,6 +153,8 @@ public sealed class BufeteDbContext(
         var action = entry.State switch
         {
             EntityState.Added => "Create",
+            EntityState.Modified when IsSoftDelete(entry) => "SoftDelete",
+            EntityState.Modified when IsRestore(entry) => "Restore",
             EntityState.Modified => "Update",
             EntityState.Deleted => "Delete",
             _ => entry.State.ToString()
@@ -162,7 +164,9 @@ public sealed class BufeteDbContext(
 
         foreach (var property in entry.Properties.Where(property => ShouldIncludeProperty(entry, property)))
         {
-            changes[property.Metadata.Name] = entry.State == EntityState.Modified
+            changes[property.Metadata.Name] = IsSensitiveAuditProperty(property.Metadata.Name)
+                ? "[PROTECTED]"
+                : entry.State == EntityState.Modified
                 ? new { Original = property.OriginalValue, Current = property.CurrentValue }
                 : property.CurrentValue;
         }
@@ -183,6 +187,18 @@ public sealed class BufeteDbContext(
         };
     }
 
+    private static bool IsSoftDelete(EntityEntry entry)
+    {
+        var property = entry.Properties.FirstOrDefault(item => item.Metadata.Name == "DeletedAtUtc");
+        return property is { IsModified: true, OriginalValue: null } && property.CurrentValue is not null;
+    }
+
+    private static bool IsRestore(EntityEntry entry)
+    {
+        var property = entry.Properties.FirstOrDefault(item => item.Metadata.Name == "DeletedAtUtc");
+        return property is { IsModified: true, CurrentValue: null } && property.OriginalValue is not null;
+    }
+
     private static bool ShouldIncludeProperty(EntityEntry entry, PropertyEntry property)
     {
         if (property.Metadata.Name is "PasswordHash" or "TokenHash" or "SecurityStamp")
@@ -192,4 +208,18 @@ public sealed class BufeteDbContext(
 
         return entry.State != EntityState.Modified || property.IsModified;
     }
+
+    private static bool IsSensitiveAuditProperty(string propertyName) => propertyName is
+        "Dpi" or
+        "ResidenceAddress" or
+        "WorkAddress" or
+        "Phone" or
+        "MobilePhone" or
+        "HomePhone" or
+        "WorkPhone" or
+        "SalaryAmount" or
+        "Notes" or
+        "Observations" or
+        "Description" or
+        "FailureMessage";
 }

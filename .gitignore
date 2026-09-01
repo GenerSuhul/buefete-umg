@@ -29,3 +29,11 @@ Thumbs.db
 storage/
 .data/
 logs/
+
+# Local tool state and disposable workspaces
+.appdata/
+.azure-cli/
+.build/
+.docker-sandbox/
+.dotnet-cli-home/
+tmp/

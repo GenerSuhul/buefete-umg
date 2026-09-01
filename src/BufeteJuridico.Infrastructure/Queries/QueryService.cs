@@ -23,37 +23,74 @@ internal sealed class QueryService(BufeteDbContext dbContext) : IQueryService
 
         var clients = await dbContext.Clients.AsNoTracking()
             .Where(item => item.IsActive && item.NormalizedFullName.Contains(normalized))
+            .OrderBy(item => item.NormalizedFullName)
+            .ThenBy(item => item.Id)
             .Select(item => new { item.Id, item.FullName, Secondary = item.Dpi ?? item.ReceptionNumber })
             .Take(250)
             .ToListAsync(cancellationToken);
         var students = await dbContext.Students.AsNoTracking()
             .Where(item => item.IsActive && item.NormalizedFullName.Contains(normalized))
+            .OrderBy(item => item.NormalizedFullName)
+            .ThenBy(item => item.Id)
             .Select(item => new { item.Id, item.FullName, Secondary = item.StudentCardNumber })
             .Take(250)
             .ToListAsync(cancellationToken);
 
-        var results = new List<SearchResultDto>();
-        foreach (var client in clients)
-        {
-            var latestCase = await dbContext.LegalCases.AsNoTracking().Include(item => item.Timeline)
-                .Where(item => item.ClientId == client.Id)
-                .OrderByDescending(item => item.OpenedAtUtc)
-                .FirstOrDefaultAsync(cancellationToken);
-            results.Add(new SearchResultDto(
-                client.Id, "Cliente", client.FullName, client.Secondary, latestCase?.Id,
-                latestCase?.Status.ToString(), latestCase?.Timeline.OrderByDescending(item => item.OccurredAtUtc).FirstOrDefault()?.Title));
-        }
+        var clientIds = clients.Select(item => item.Id).ToList();
+        var latestClientCases = clientIds.Count == 0
+            ? []
+            : await dbContext.LegalCases.AsNoTracking()
+                .Where(item => clientIds.Contains(item.ClientId))
+                .GroupBy(item => item.ClientId)
+                .Select(group => group
+                    .OrderByDescending(item => item.OpenedAtUtc)
+                    .Select(item => new SearchCaseSnapshot(
+                        group.Key,
+                        item.Id,
+                        item.Status,
+                        item.Timeline
+                            .OrderByDescending(entry => entry.OccurredAtUtc)
+                            .Select(entry => entry.Title)
+                            .FirstOrDefault()))
+                    .First())
+                .ToListAsync(cancellationToken);
+        var clientCaseMap = latestClientCases.ToDictionary(item => item.OwnerId);
 
-        foreach (var student in students)
-        {
-            var latestAssignment = await dbContext.CaseAssignments.AsNoTracking().Include(item => item.LegalCase).ThenInclude(item => item.Timeline)
-                .Where(item => item.StudentId == student.Id)
-                .OrderByDescending(item => item.AssignedAtUtc)
-                .FirstOrDefaultAsync(cancellationToken);
-            results.Add(new SearchResultDto(
-                student.Id, "Alumno", student.FullName, student.Secondary, latestAssignment?.LegalCaseId,
-                latestAssignment?.LegalCase.Status.ToString(), latestAssignment?.LegalCase.Timeline.OrderByDescending(item => item.OccurredAtUtc).FirstOrDefault()?.Title));
-        }
+        var studentIds = students.Select(item => item.Id).ToList();
+        var latestStudentCases = studentIds.Count == 0
+            ? []
+            : await dbContext.CaseAssignments.AsNoTracking()
+                .Where(item => studentIds.Contains(item.StudentId))
+                .GroupBy(item => item.StudentId)
+                .Select(group => group
+                    .OrderByDescending(item => item.AssignedAtUtc)
+                    .Select(item => new SearchCaseSnapshot(
+                        group.Key,
+                        item.LegalCaseId,
+                        item.LegalCase.Status,
+                        item.LegalCase.Timeline
+                            .OrderByDescending(entry => entry.OccurredAtUtc)
+                            .Select(entry => entry.Title)
+                            .FirstOrDefault()))
+                    .First())
+                .ToListAsync(cancellationToken);
+        var studentCaseMap = latestStudentCases.ToDictionary(item => item.OwnerId);
+
+        var results = clients.Select(client =>
+            {
+                clientCaseMap.TryGetValue(client.Id, out var latestCase);
+                return new SearchResultDto(
+                    client.Id, "Client", client.FullName, client.Secondary, latestCase?.CaseId,
+                    latestCase?.Status.ToString(), latestCase?.LastStep);
+            })
+            .Concat(students.Select(student =>
+            {
+                studentCaseMap.TryGetValue(student.Id, out var latestCase);
+                return new SearchResultDto(
+                    student.Id, "Student", student.FullName, student.Secondary, latestCase?.CaseId,
+                    latestCase?.Status.ToString(), latestCase?.LastStep);
+            }))
+            .ToList();
 
         var ordered = results.OrderBy(item => item.DisplayName).ThenBy(item => item.ResultType).ToList();
         return new PagedResult<SearchResultDto>(
@@ -104,9 +141,15 @@ internal sealed class QueryService(BufeteDbContext dbContext) : IQueryService
         var total = await query.CountAsync(cancellationToken);
         var cases = await query.OrderBy(item => item.RetentionStartsAtUtc)
             .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(cancellationToken);
-        var results = new List<RetentionCandidateDto>();
-        foreach (var legalCase in cases)
-            results.Add(await MapRetentionCandidateAsync(legalCase, retentionDays, cancellationToken));
+        var documentCounts = await GetRetentionDocumentCountsAsync(
+            cases.Select(item => item.Id).ToList(),
+            cancellationToken);
+        var results = cases
+            .Select(legalCase => MapRetentionCandidate(
+                legalCase,
+                retentionDays,
+                documentCounts.GetValueOrDefault(legalCase.Id)))
+            .ToList();
         return new PagedResult<RetentionCandidateDto>(results, page, pageSize, total);
     }
 
@@ -122,7 +165,11 @@ internal sealed class QueryService(BufeteDbContext dbContext) : IQueryService
             ?? throw new NotFoundException("No se encontró el expediente.");
         if (legalCase.Status != LegalCaseStatus.Closed || legalCase.RetentionStartsAtUtc is null || legalCase.RetentionStartsAtUtc.Value.AddDays(retentionDays) > asOfUtc)
             throw new ConflictException("El expediente todavía no es candidato a retención.");
-        var candidate = await MapRetentionCandidateAsync(legalCase, retentionDays, cancellationToken);
+        var documentCounts = await GetRetentionDocumentCountsAsync([legalCase.Id], cancellationToken);
+        var candidate = MapRetentionCandidate(
+            legalCase,
+            retentionDays,
+            documentCounts.GetValueOrDefault(legalCase.Id));
         return new RetentionPreviewDto(
             candidate,
             [
@@ -135,19 +182,64 @@ internal sealed class QueryService(BufeteDbContext dbContext) : IQueryService
             "La depuración física está bloqueada hasta que la institución apruebe por escrito la política de conservación y el alcance legal.");
     }
 
-    private async Task<RetentionCandidateDto> MapRetentionCandidateAsync(
-        LegalCase legalCase,
-        int retentionDays,
+    private async Task<Dictionary<Guid, int>> GetRetentionDocumentCountsAsync(
+        IReadOnlyCollection<Guid> caseIds,
         CancellationToken cancellationToken)
     {
-        var requirementIds = await dbContext.CaseRequirements.Where(item => item.LegalCaseId == legalCase.Id).Select(item => item.Id).ToListAsync(cancellationToken);
-        var timelineIds = legalCase.Timeline.Select(item => item.Id).ToList();
-        var memorialIds = await dbContext.Memorials.Where(item => item.LegalCaseId == legalCase.Id).Select(item => item.Id).ToListAsync(cancellationToken);
-        var documentCount = await dbContext.Documents.CountAsync(item => item.DeletedAtUtc == null && (
-            (item.ContextType == DocumentContextType.LegalCase && item.ContextId == legalCase.Id) ||
-            (item.ContextType == DocumentContextType.CaseRequirement && requirementIds.Contains(item.ContextId)) ||
-            (item.ContextType == DocumentContextType.Timeline && timelineIds.Contains(item.ContextId)) ||
-            (item.ContextType == DocumentContextType.Memorial && memorialIds.Contains(item.ContextId))), cancellationToken);
+        if (caseIds.Count == 0) return [];
+
+        var requirementOwners = await dbContext.CaseRequirements.AsNoTracking()
+            .Where(item => caseIds.Contains(item.LegalCaseId))
+            .Select(item => new RetentionContextOwner(item.Id, item.LegalCaseId))
+            .ToListAsync(cancellationToken);
+        var timelineOwners = await dbContext.TimelineEntries.AsNoTracking()
+            .Where(item => caseIds.Contains(item.LegalCaseId))
+            .Select(item => new RetentionContextOwner(item.Id, item.LegalCaseId))
+            .ToListAsync(cancellationToken);
+        var memorialOwners = await dbContext.Memorials.AsNoTracking()
+            .Where(item => caseIds.Contains(item.LegalCaseId))
+            .Select(item => new RetentionContextOwner(item.Id, item.LegalCaseId))
+            .ToListAsync(cancellationToken);
+
+        var requirementMap = requirementOwners.ToDictionary(item => item.ContextId, item => item.CaseId);
+        var timelineMap = timelineOwners.ToDictionary(item => item.ContextId, item => item.CaseId);
+        var memorialMap = memorialOwners.ToDictionary(item => item.ContextId, item => item.CaseId);
+        var requirementIds = requirementMap.Keys.ToList();
+        var timelineIds = timelineMap.Keys.ToList();
+        var memorialIds = memorialMap.Keys.ToList();
+
+        var documentGroups = await dbContext.Documents.AsNoTracking()
+            .Where(item => item.DeletedAtUtc == null && (
+                (item.ContextType == DocumentContextType.LegalCase && caseIds.Contains(item.ContextId)) ||
+                (item.ContextType == DocumentContextType.CaseRequirement && requirementIds.Contains(item.ContextId)) ||
+                (item.ContextType == DocumentContextType.Timeline && timelineIds.Contains(item.ContextId)) ||
+                (item.ContextType == DocumentContextType.Memorial && memorialIds.Contains(item.ContextId))))
+            .GroupBy(item => new { item.ContextType, item.ContextId })
+            .Select(group => new RetentionContextCount(group.Key.ContextType, group.Key.ContextId, group.Count()))
+            .ToListAsync(cancellationToken);
+
+        var counts = caseIds.ToDictionary(id => id, _ => 0);
+        foreach (var group in documentGroups)
+        {
+            var caseId = group.ContextType switch
+            {
+                DocumentContextType.LegalCase => group.ContextId,
+                DocumentContextType.CaseRequirement => requirementMap.GetValueOrDefault(group.ContextId),
+                DocumentContextType.Timeline => timelineMap.GetValueOrDefault(group.ContextId),
+                DocumentContextType.Memorial => memorialMap.GetValueOrDefault(group.ContextId),
+                _ => Guid.Empty
+            };
+            if (caseId != Guid.Empty) counts[caseId] += group.Count;
+        }
+
+        return counts;
+    }
+
+    private static RetentionCandidateDto MapRetentionCandidate(
+        LegalCase legalCase,
+        int retentionDays,
+        int documentCount)
+    {
         var starts = legalCase.RetentionStartsAtUtc!.Value;
         return new RetentionCandidateDto(
             legalCase.Id, legalCase.CaseNumber, legalCase.Client.FullName, starts, starts.AddDays(retentionDays),
@@ -159,4 +251,17 @@ internal sealed class QueryService(BufeteDbContext dbContext) : IQueryService
         if (retentionDays < 30 || retentionDays > 3650)
             throw new ValidationException("El período de retención debe estar entre 30 y 3650 días.");
     }
+
+    private sealed record SearchCaseSnapshot(
+        Guid OwnerId,
+        Guid CaseId,
+        LegalCaseStatus Status,
+        string? LastStep);
+
+    private sealed record RetentionContextOwner(Guid ContextId, Guid CaseId);
+
+    private sealed record RetentionContextCount(
+        DocumentContextType ContextType,
+        Guid ContextId,
+        int Count);
 }

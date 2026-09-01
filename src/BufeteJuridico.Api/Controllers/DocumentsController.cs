@@ -46,6 +46,17 @@ public sealed class DocumentsController(IDocumentService service) : ApiV1Control
         CancellationToken cancellationToken = default) =>
         Ok(await service.GetDocumentsAsync(contextType, contextId, search, page, pageSize, cancellationToken));
 
+    [HttpGet("context/{contextType}/{contextId:guid}/history")]
+    [Authorize(Policy = Permissions.DocumentsRead)]
+    public async Task<ActionResult<PagedResult<DocumentDto>>> GetHistory(
+        DocumentContextType contextType,
+        Guid contextId,
+        string? label,
+        int page = 1,
+        int pageSize = 100,
+        CancellationToken cancellationToken = default) =>
+        Ok(await service.GetForContextAsync(contextType, contextId, label, page, pageSize, cancellationToken));
+
     [HttpGet("{id:guid}/content")]
     [Authorize(Policy = Permissions.DocumentsRead)]
     public async Task<IActionResult> Download(Guid id, CancellationToken cancellationToken)

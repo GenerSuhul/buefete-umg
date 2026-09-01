@@ -355,6 +355,12 @@ internal sealed class UserManagementService(
             dbContext.RolePermissions.Add(new RolePermission { Role = role, PermissionId = permission.Id });
         }
 
+        var affectedUsers = await dbContext.Users
+            .Where(item => item.Roles.Any(assignment => assignment.RoleId == id))
+            .ToListAsync(cancellationToken);
+        foreach (var user in affectedUsers) user.SecurityStamp = Guid.NewGuid();
+        await RevokeActiveTokensAsync(affectedUsers.Select(item => item.Id).ToArray(), cancellationToken);
+
         await dbContext.SaveChangesAsync(cancellationToken);
         return Map(role);
     }
@@ -399,10 +405,14 @@ internal sealed class UserManagementService(
     }
 
     private async Task RevokeActiveTokensAsync(Guid userId, CancellationToken cancellationToken)
+        => await RevokeActiveTokensAsync([userId], cancellationToken);
+
+    private async Task RevokeActiveTokensAsync(IReadOnlyCollection<Guid> userIds, CancellationToken cancellationToken)
     {
+        if (userIds.Count == 0) return;
         var now = timeProvider.GetUtcNow();
         var tokens = await dbContext.RefreshTokens
-            .Where(item => item.UserId == userId && item.RevokedAtUtc == null && item.ExpiresAtUtc > now)
+            .Where(item => userIds.Contains(item.UserId) && item.RevokedAtUtc == null && item.ExpiresAtUtc > now)
             .ToListAsync(cancellationToken);
         foreach (var token in tokens)
         {

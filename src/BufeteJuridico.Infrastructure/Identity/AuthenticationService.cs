@@ -51,12 +51,15 @@ internal sealed class AuthenticationService(
 
         if (verification == PasswordVerificationResult.Failed)
         {
-            user.FailedLoginAttempts++;
-            if (user.FailedLoginAttempts >= MaximumFailedAttempts)
-            {
-                user.LockoutEndUtc = now.Add(LockoutDuration);
-                user.FailedLoginAttempts = 0;
-            }
+            var nextStamp = Guid.NewGuid();
+            await dbContext.Users
+                .Where(item => item.Id == user.Id)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.FailedLoginAttempts,
+                        item => item.FailedLoginAttempts + 1 >= MaximumFailedAttempts ? 0 : item.FailedLoginAttempts + 1)
+                    .SetProperty(item => item.LockoutEndUtc,
+                        item => item.FailedLoginAttempts + 1 >= MaximumFailedAttempts ? now.Add(LockoutDuration) : item.LockoutEndUtc)
+                    .SetProperty(item => item.ConcurrencyToken, nextStamp), cancellationToken);
 
             AddAuthenticationAudit("LoginFailed", user, ipAddress);
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -85,30 +88,46 @@ internal sealed class AuthenticationService(
     {
         var tokenHash = HashToken(request.RefreshToken);
         var now = timeProvider.GetUtcNow();
-        var refreshToken = await dbContext.RefreshTokens
-            .Include(item => item.User)
-                .ThenInclude(item => item.Roles)
-                    .ThenInclude(item => item.Role)
-                        .ThenInclude(item => item.Permissions)
-                            .ThenInclude(item => item.Permission)
-            .SingleOrDefaultAsync(item => item.TokenHash == tokenHash, cancellationToken)
-            ?? throw new AuthenticationException("El token de renovación no es válido.");
-
-        if (refreshToken.RevokedAtUtc is not null || refreshToken.ExpiresAtUtc <= now ||
-            !UserAccessRules.CanSignIn(refreshToken.User, DateOnly.FromDateTime(now.UtcDateTime)))
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
         {
-            throw new AuthenticationException("El token de renovación expiró o fue revocado.");
-        }
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            var refreshToken = await dbContext.RefreshTokens
+                .Include(item => item.User)
+                    .ThenInclude(item => item.Roles)
+                        .ThenInclude(item => item.Role)
+                            .ThenInclude(item => item.Permissions)
+                                .ThenInclude(item => item.Permission)
+                .SingleOrDefaultAsync(item => item.TokenHash == tokenHash, cancellationToken)
+                ?? throw new AuthenticationException("El token de renovación no es válido.");
 
-        refreshToken.RevokedAtUtc = now;
-        refreshToken.RevokedByIp = ipAddress;
+            if (refreshToken.RevokedAtUtc is not null || refreshToken.ExpiresAtUtc <= now ||
+                !UserAccessRules.CanSignIn(refreshToken.User, DateOnly.FromDateTime(now.UtcDateTime)))
+            {
+                throw new AuthenticationException("El token de renovación expiró o fue revocado.");
+            }
 
-        var response = await IssueTokenPairAsync(refreshToken.User, ipAddress, cancellationToken);
-        refreshToken.ReplacedByTokenHash = HashToken(response.RefreshToken);
-        AddAuthenticationAudit("TokenRefreshed", refreshToken.User, ipAddress);
-        await dbContext.SaveChangesAsync(cancellationToken);
+            var claimed = await dbContext.RefreshTokens
+                .Where(item =>
+                    item.Id == refreshToken.Id &&
+                    item.RevokedAtUtc == null &&
+                    item.ExpiresAtUtc > now)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.RevokedAtUtc, now)
+                    .SetProperty(item => item.RevokedByIp, ipAddress), cancellationToken);
+            if (claimed != 1)
+                throw new AuthenticationException("El token de renovación ya fue utilizado o revocado.");
 
-        return response;
+            refreshToken.RevokedAtUtc = now;
+            refreshToken.RevokedByIp = ipAddress;
+
+            var response = await IssueTokenPairAsync(refreshToken.User, ipAddress, cancellationToken);
+            refreshToken.ReplacedByTokenHash = HashToken(response.RefreshToken);
+            AddAuthenticationAudit("TokenRefreshed", refreshToken.User, ipAddress);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return response;
+        });
     }
 
     public async Task RevokeAsync(

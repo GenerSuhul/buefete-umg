@@ -50,6 +50,9 @@ public sealed class PlatformEndpointsTests : IClassFixture<PlatformApiFactory>
         Assert.Equal("nosniff", response.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.Equal("DENY", response.Headers.GetValues("X-Frame-Options").Single());
         Assert.Equal("no-referrer", response.Headers.GetValues("Referrer-Policy").Single());
+        Assert.Equal("none", response.Headers.GetValues("X-Permitted-Cross-Domain-Policies").Single());
+        Assert.Contains("no-store", response.Headers.CacheControl?.ToString(), StringComparison.Ordinal);
+        Assert.Contains("no-cache", response.Headers.Pragma.Select(value => value.Name));
         Assert.False(response.Headers.Contains("Server"));
     }
 
@@ -111,6 +114,14 @@ public sealed class PlatformEndpointsTests : IClassFixture<PlatformApiFactory>
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Deleted_records_reject_anonymous_requests()
+    {
+        var response = await _client.GetAsync("/api/v1/deleted-records");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
     [Theory]
     [InlineData("/api/system")]
     [InlineData("/api/v2/system")]
@@ -130,10 +141,29 @@ public sealed class PlatformEndpointsTests : IClassFixture<PlatformApiFactory>
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("/api/v1/system", document, StringComparison.Ordinal);
         Assert.Contains("/api/v1/scan-sessions", document, StringComparison.Ordinal);
+        Assert.Contains("/api/v1/deleted-records", document, StringComparison.Ordinal);
         Assert.Contains("/api/v1/Dashboard", document, StringComparison.Ordinal);
         Assert.DoesNotContain("\"/api/system\"", document, StringComparison.Ordinal);
         Assert.Contains("\"email\"", document, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("\"LoginRequest\":{\"properties\":{\"username\"", document, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task OpenApi_documents_bearer_security_only_for_protected_operations()
+    {
+        var response = await _client.GetAsync("/openapi/v1.json");
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = document.RootElement;
+
+        Assert.True(root.GetProperty("components").GetProperty("securitySchemes").TryGetProperty("Bearer", out _));
+        Assert.True(root.GetProperty("paths").GetProperty("/api/v1/Users").GetProperty("get")
+            .TryGetProperty("security", out var protectedSecurity));
+        Assert.NotEqual(0, protectedSecurity.GetArrayLength());
+        Assert.False(root.GetProperty("paths").GetProperty("/api/v1/auth/login").GetProperty("post")
+            .TryGetProperty("security", out _));
+        Assert.False(root.GetProperty("paths").GetProperty("/api/v1/system").GetProperty("get")
+            .TryGetProperty("security", out _));
     }
 
     private sealed record SystemInfo(string Service, string Version, DateTimeOffset UtcNow);

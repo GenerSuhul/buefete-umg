@@ -1,11 +1,15 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import App from './App';
+import { FeedbackProvider } from './components/ui/Feedback';
 import { AuthProvider } from './context/AuthContext';
+
+const Providers = ({ children }: { children: ReactNode }) => <FeedbackProvider><AuthProvider>{children}</AuthProvider></FeedbackProvider>;
 
 describe('Bufete Jurídico UMG', () => {
   it('muestra el resumen institucional usando el origen mock', async () => {
-    render(<MemoryRouter><AuthProvider><App /></AuthProvider></MemoryRouter>);
+    render(<MemoryRouter><Providers><App /></Providers></MemoryRouter>);
     expect(await screen.findByText(/Hola/i)).toBeInTheDocument();
     expect(await screen.findByText('Expedientes activos')).toBeInTheDocument();
     expect(screen.getByRole('img', { name: 'Universidad Mariano Gálvez' })).toHaveAttribute('src', '/umg.png');
@@ -13,7 +17,7 @@ describe('Bufete Jurídico UMG', () => {
   });
 
   it('permite desplegar módulos desde una única navegación lateral', async () => {
-    render(<MemoryRouter><AuthProvider><App /></AuthProvider></MemoryRouter>);
+    render(<MemoryRouter><Providers><App /></Providers></MemoryRouter>);
     const legalGroup = await screen.findByRole('button', { name: /Gestión jurídica/i });
     expect(legalGroup).toHaveAttribute('aria-expanded', 'true');
     fireEvent.click(legalGroup);
@@ -23,15 +27,15 @@ describe('Bufete Jurídico UMG', () => {
   });
 
   it('abre un expediente y muestra su último paso trazable', async () => {
-    render(<MemoryRouter initialEntries={['/expedientes/30000000-0000-0000-0000-000000000001']}><AuthProvider><App /></AuthProvider></MemoryRouter>);
+    render(<MemoryRouter initialEntries={['/expedientes/30000000-0000-0000-0000-000000000001']}><Providers><App /></Providers></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Ana Lucía Morales Pérez' })).toBeInTheDocument();
     expect(await screen.findByText('Memorial devuelto con observaciones')).toBeInTheDocument();
   });
 
   it('expone el flujo de digitalización en documentos', async () => {
-    render(<MemoryRouter initialEntries={['/documentos']}><AuthProvider><App /></AuthProvider></MemoryRouter>);
-    const scanButton = await screen.findByRole('button', { name: 'Escanear' });
-    fireEvent.click(scanButton);
+    render(<MemoryRouter initialEntries={['/documentos']}><Providers><App /></Providers></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Adjuntar documento' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Escanear documento/i }));
     expect(await screen.findByRole('dialog', { name: 'Digitalizar documento' })).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: /Documento y destino/i })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Escáner y calidad/i })).toBeInTheDocument();

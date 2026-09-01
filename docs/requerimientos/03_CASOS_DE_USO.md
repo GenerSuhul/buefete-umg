@@ -502,6 +502,23 @@ vigente.
 **Resultado:** el estudiante puede operar como secretaría durante la modalidad
 autorizada sin dejar de ser alumno en su expediente académico.
 
+### CU-30. Eliminar lógicamente y restaurar registros operativos
+
+**Actores:** secretaría o administrador para eliminar; administrador para
+consultar y restaurar.
+**Precondición:** existe un cliente, alumno o expediente activo.
+
+1. El actor solicita eliminar el registro y confirma el alcance.
+2. El sistema lo oculta de la operación ordinaria y conserva datos, documentos,
+   usuario, fecha, motivo e identificador de lote.
+3. Solo el administrador puede consultarlo en `Eliminados`.
+4. El administrador puede restaurarlo; las dependencias del mismo lote se
+   recuperan de forma consistente.
+5. Eliminación y restauración quedan auditadas.
+
+**Resultado:** el registro no es visible durante la operación diaria, pero puede
+recuperarse sin ejecutar una eliminación física.
+
 ## 4. Relaciones entre casos de uso
 
 - CU-08 depende de CU-04 y CU-07.
@@ -519,3 +536,5 @@ autorizada sin dejar de ser alumno en su expediente académico.
 - CU-27 depende de CU-10 y de la revisión de su papelería.
 - CU-28 depende de una resolución favorable en CU-27.
 - CU-29 depende de CU-28 y no sustituye el perfil académico del alumno.
+- CU-30 es independiente de CU-25: la primera es reversible y la segunda es una
+  depuración física sujeta a política institucional.

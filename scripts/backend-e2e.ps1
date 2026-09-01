@@ -8,6 +8,10 @@ $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $environmentPath = Join-Path $repositoryRoot '.env'
 $containerName = 'bufete-juridico-umg-postgres-1'
 $suffix = [Guid]::NewGuid().ToString('N').Substring(0, 12)
+$numericSeed = [Convert]::ToInt64($suffix, 16) % 10000000000000
+$clientDpi = $numericSeed.ToString('D13')
+$studentDpi = (($numericSeed + 1) % 10000000000000).ToString('D13')
+$rollbackDpi = (($numericSeed + 2) % 10000000000000).ToString('D13')
 $databaseName = "bufete_juridico_e2e_$suffix"
 $baseUrl = "http://127.0.0.1:$Port"
 $apiProcess = $null
@@ -116,19 +120,25 @@ function Upload-TestDocument {
     param(
         [string]$Token,
         [Guid]$ContextId,
-        [ValidateSet('Pdf', 'Image')][string]$Kind = 'Pdf'
+        [ValidateSet('LegalCase', 'CaseRequirement', 'Memorial', 'Student', 'UserPhoto')][string]$ContextType = 'LegalCase',
+        [ValidateSet('Pdf', 'Image')][string]$Kind = 'Pdf',
+        [string]$Label,
+        [Guid]$ReplaceDocumentId = [Guid]::Empty,
+        [int]$ExpectedStatus = 201
     )
 
     Add-Type -AssemblyName System.Net.Http
     if ($Kind -eq 'Image') {
         $filePath = Join-Path $artifactDirectory 'foto-e2e.png'
         $fileBytes = [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=')
-        $fileName = 'foto-e2e.png'; $mediaType = 'image/png'; $label = 'Fotografía E2E'
+        $fileName = 'foto-e2e.png'; $mediaType = 'image/png'
+        if ([string]::IsNullOrWhiteSpace($Label)) { $Label = 'Fotografía E2E' }
     }
     else {
         $filePath = Join-Path $artifactDirectory 'memorial-e2e.pdf'
         $fileBytes = [System.Text.Encoding]::ASCII.GetBytes("%PDF-1.4`n1 0 obj<</Type/Catalog>>endobj`ntrailer<</Root 1 0 R>>`n%%EOF")
-        $fileName = 'memorial-e2e.pdf'; $mediaType = 'application/pdf'; $label = 'Memorial inicial E2E'
+        $fileName = 'memorial-e2e.pdf'; $mediaType = 'application/pdf'
+        if ([string]::IsNullOrWhiteSpace($Label)) { $Label = 'Memorial inicial E2E' }
     }
     [System.IO.File]::WriteAllBytes($filePath, $fileBytes)
 
@@ -142,16 +152,20 @@ function Upload-TestDocument {
         $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse($mediaType)
         $form.Add($fileContent, 'File', $fileName)
         $form.Add((New-Object System.Net.Http.StringContent('Upload')), 'Source')
-        $form.Add((New-Object System.Net.Http.StringContent('LegalCase')), 'ContextType')
+        $form.Add((New-Object System.Net.Http.StringContent($ContextType)), 'ContextType')
         $form.Add((New-Object System.Net.Http.StringContent($ContextId.ToString())), 'ContextId')
-        $form.Add((New-Object System.Net.Http.StringContent($label)), 'Label')
+        $form.Add((New-Object System.Net.Http.StringContent($Label)), 'Label')
+        if ($ReplaceDocumentId -ne [Guid]::Empty) {
+            $form.Add((New-Object System.Net.Http.StringContent($ReplaceDocumentId.ToString())), 'ReplaceDocumentId')
+        }
 
         $response = $client.PostAsync("$baseUrl/api/v1/documents", $form).GetAwaiter().GetResult()
         $content = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-        if ([int]$response.StatusCode -ne 201) {
+        if ([int]$response.StatusCode -ne $ExpectedStatus) {
             throw "La carga documental devolvió HTTP $([int]$response.StatusCode): $content"
         }
 
+        if ([string]::IsNullOrWhiteSpace($content)) { return $null }
         return $content | ConvertFrom-Json
     }
     finally {
@@ -224,7 +238,11 @@ try {
     $env:Database__ApplyMigrationsOnStartup = 'true'
     $env:ASPNETCORE_URLS = $baseUrl
     $env:ASPNETCORE_ENVIRONMENT = 'Development'
+    $env:RateLimiting__Authentication__PermitLimit = '100'
     $env:Storage__RootPath = Join-Path $artifactDirectory 'files'
+    if ($env:Storage__Provider -eq 'S3') {
+        $env:Storage__S3__KeyPrefix = "bufete-e2e/$suffix"
+    }
 
     $stdoutPath = Join-Path $artifactDirectory 'api.stdout.log'
     $stderrPath = Join-Path $artifactDirectory 'api.stderr.log'
@@ -302,7 +320,7 @@ try {
         nationality = 'Guatemalteca'
         sex = 'F'
         maritalStatus = 'Soltera'
-        dpi = "E2E-$suffix"
+        dpi = $clientDpi
         residenceAddress = 'Dirección de prueba controlada'
         education = 'Diversificado'
         occupation = 'Comerciante'
@@ -346,21 +364,25 @@ try {
     $null = Invoke-Api -Method Get -Path "/api/v1/clients/$($client.id)/income-declarations" -Token $adminToken
     $declarationPrint = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/v1/clients/income-declarations/$($declaration.id)/print" -Headers @{ Authorization = "Bearer $adminToken" }
     if ([int]$declarationPrint.StatusCode -ne 200 -or $declarationPrint.Headers['Content-Type'] -notlike 'text/html*') { throw 'La declaración imprimible no está disponible.' }
-    $client = Invoke-Api -Method Put -Path "/api/v1/clients/$($client.id)" -Token $adminToken -Body @{
+    $clientUpdateBody = @{
         fullName = $client.fullName; birthDate = $client.birthDate; ageAtReception = $client.ageAtReception; birthPlace = $client.birthPlace
         nationality = $client.nationality; sex = $client.sex; maritalStatus = $client.maritalStatus; dpi = $client.dpi
         residenceAddress = $client.residenceAddress; education = $client.education; occupation = $client.occupation; workplace = $client.workplace
         workAddress = $client.workAddress; workPhone = $client.workPhone; phone = $client.phone; mobilePhone = $client.mobilePhone
         salaryAmount = $client.salaryAmount; salaryFrequency = $client.salaryFrequency; childrenCount = $client.childrenCount
-        assistanceRequested = $client.assistanceRequested; receptionPlace = $client.receptionPlace; receptionDate = $client.receptionDate
-        signatureDocumentId = $client.signatureDocumentId
+        assistanceRequested = "$($client.assistanceRequested) actualizada"; receptionPlace = $client.receptionPlace; receptionDate = $client.receptionDate
+        signatureDocumentId = $client.signatureDocumentId; concurrencyToken = $client.concurrencyToken
     }
+    $client = Invoke-Api -Method Put -Path "/api/v1/clients/$($client.id)" -Token $adminToken -Body $clientUpdateBody
+    $staleClientUpdateBody = $clientUpdateBody.Clone()
+    $staleClientUpdateBody.assistanceRequested = 'Cambio obsoleto que no debe persistir'
+    $null = Invoke-Api -Method Put -Path "/api/v1/clients/$($client.id)" -Token $adminToken -ExpectedStatus 409 -Body $staleClientUpdateBody
 
     $rollbackMarker = "rollback-$suffix"
     $null = Invoke-Api -Method Post -Path '/api/v1/students/registration' -Token $adminToken -ExpectedStatus 400 -Body @{
         student = @{
             fullName = "Alumno $rollbackMarker"; birthDate = $null; ageAtRegistration = $null
-            studentCardNumber = "RB-$suffix"; dpi = "RB-DPI-$suffix"; semester = 9; studyShift = 'Matutina'
+            studentCardNumber = "RB-$suffix"; dpi = $rollbackDpi; semester = 9; studyShift = 'Matutina'
             workplace = $null; workPhone = $null; immediateSupervisor = $null; jobTitle = $null
             residenceAddress = 'Dirección rollback'; mobilePhone = $null; homePhone = $null
             email = "$rollbackMarker@example.test"; registrationDate = (Get-Date).ToString('yyyy-MM-dd')
@@ -375,7 +397,7 @@ try {
     $registration = Invoke-Api -Method Post -Path '/api/v1/students/registration' -Token $adminToken -ExpectedStatus 201 -Body @{
         student = @{
             fullName = "Alumno E2E $suffix"; birthDate = '2000-02-10'; ageAtRegistration = 26
-            studentCardNumber = "CAR-$suffix"; dpi = "DPI-$suffix"; semester = 10; studyShift = 'Vespertina'
+            studentCardNumber = "CAR-$suffix"; dpi = $studentDpi; semester = 10; studyShift = 'Vespertina'
             workplace = $null; workPhone = $null; immediateSupervisor = $null; jobTitle = $null
             residenceAddress = 'Dirección alumno E2E'; mobilePhone = '55551111'; homePhone = $null
             email = "alumno-$suffix@example.test"; registrationDate = (Get-Date).ToString('yyyy-MM-dd')
@@ -396,13 +418,19 @@ try {
     $null = Invoke-Api -Method Get -Path "/api/v1/students?search=$suffix&page=1&pageSize=10" -Token $adminToken
     $null = Invoke-Api -Method Get -Path "/api/v1/students/$($student.id)" -Token $adminToken
     $null = Invoke-Api -Method Get -Path "/api/v1/students/$($student.id)/profile" -Token $adminToken
-    $student = Invoke-Api -Method Put -Path "/api/v1/students/$($student.id)" -Token $adminToken -Body @{
-        fullName = $student.fullName; birthDate = $student.birthDate; ageAtRegistration = $student.ageAtRegistration
+    $studentUpdateBody = @{
+        fullName = $student.fullName; birthDate = '1968-08-21'; ageAtRegistration = $null
         studentCardNumber = $student.studentCardNumber; dpi = $student.dpi; semester = $student.semester; studyShift = $student.studyShift
-        workplace = $student.workplace; workPhone = $student.workPhone; immediateSupervisor = $student.immediateSupervisor; jobTitle = $student.jobTitle
+        workplace = 'Práctica supervisada E2E'; workPhone = $student.workPhone; immediateSupervisor = $student.immediateSupervisor; jobTitle = $student.jobTitle
         residenceAddress = $student.residenceAddress; mobilePhone = $student.mobilePhone; homePhone = $student.homePhone
-        email = $student.email; registrationDate = $student.registrationDate
+        email = $student.email; registrationDate = $student.registrationDate; concurrencyToken = $student.concurrencyToken
     }
+    $student = Invoke-Api -Method Put -Path "/api/v1/students/$($student.id)" -Token $adminToken -Body $studentUpdateBody
+    $studentAfterReload = Invoke-Api -Method Get -Path "/api/v1/students/$($student.id)" -Token $adminToken
+    if ($studentAfterReload.birthDate -ne '1968-08-21') { throw 'La fecha histórica del alumno no persistió exactamente como DateOnly.' }
+    $staleStudentUpdateBody = $studentUpdateBody.Clone()
+    $staleStudentUpdateBody.workplace = 'Cambio obsoleto que no debe persistir'
+    $null = Invoke-Api -Method Put -Path "/api/v1/students/$($student.id)" -Token $adminToken -ExpectedStatus 409 -Body $staleStudentUpdateBody
     foreach ($studentRequirement in @($enrollment.requirements)) {
         $enrollment = Invoke-Api -Method Put -Path "/api/v1/students/enrollments/$($enrollment.id)/requirements/$($studentRequirement.id)" -Token $adminToken -Body @{
             status = 'Accepted'; documentId = $null; dataValue = 'Validado E2E'; documentIssueDate = (Get-Date).ToString('yyyy-MM-dd'); notes = 'Cobertura E2E'
@@ -427,7 +455,10 @@ try {
         roleId = $customRole.id; validFromUtc = [DateTimeOffset]::UtcNow.ToString('o'); validUntilUtc = [DateTimeOffset]::UtcNow.AddDays(1).ToString('o')
     }
     $null = Invoke-Api -Method Delete -Path "/api/v1/users/$($studentUser.id)/roles/$($customRole.id)" -Token $adminToken -ExpectedStatus 204
-    $null = Invoke-Api -Method Put -Path "/api/v1/users/$($studentUser.id)/photo" -Token $adminToken -Body @{ documentId = $null }
+    $studentPhotoDocument = Upload-TestDocument -Token $adminToken -ContextId $studentUser.id -ContextType UserPhoto -Kind Image -Label 'Fotografía de perfil'
+    $studentIdentityDocument = Upload-TestDocument -Token $adminToken -ContextId $student.id -ContextType Student -Label 'Documento de identificación del alumno'
+    $studentUser = Invoke-Api -Method Put -Path "/api/v1/users/$($studentUser.id)/photo" -Token $adminToken -Body @{ documentId = $studentPhotoDocument.id }
+    if ($studentUser.photoDocumentId -ne $studentPhotoDocument.id) { throw 'La fotografía del alumno no quedó vinculada a su usuario.' }
 
     $legalCase = Invoke-Api -Method Post -Path '/api/v1/cases' -Token $adminToken -ExpectedStatus 201 -Body @{
         clientId = $client.id
@@ -442,6 +473,15 @@ try {
             notes = 'Dato de prueba'
         })
     }
+    $caseUpdateBody = @{
+        status = $legalCase.summary.status
+        stage = 'Recolección documental E2E'
+        concurrencyToken = $legalCase.summary.concurrencyToken
+    }
+    $legalCase = Invoke-Api -Method Put -Path "/api/v1/cases/$($legalCase.summary.id)" -Token $adminToken -Body $caseUpdateBody
+    $staleCaseUpdateBody = $caseUpdateBody.Clone()
+    $staleCaseUpdateBody.stage = 'Etapa obsoleta que no debe persistir'
+    $null = Invoke-Api -Method Put -Path "/api/v1/cases/$($legalCase.summary.id)" -Token $adminToken -ExpectedStatus 409 -Body $staleCaseUpdateBody
     $null = Invoke-Api -Method Get -Path "/api/v1/cases?search=$suffix&page=1&pageSize=10" -Token $adminToken
     $additionalCounterparty = Invoke-Api -Method Post -Path "/api/v1/cases/$($legalCase.summary.id)/counterparties" -Token $adminToken -ExpectedStatus 201 -Body @{
         fullName = 'Segunda contraparte E2E'; dpi = $null; residenceAddress = 'Guatemala'; workAddress = $null; phone = $null; notes = 'Alta E2E'
@@ -450,13 +490,22 @@ try {
         fullName = 'Segunda contraparte E2E actualizada'; dpi = $null; residenceAddress = 'Guatemala'; workAddress = $null; phone = $null; notes = 'Actualización E2E'
     }
 
+    $assignmentCandidates = Invoke-Api -Method Get -Path "/api/v1/students/assignment-candidates?caseId=$($legalCase.summary.id)&search=$suffix&page=1&pageSize=1" -Token $adminToken
+    if ($assignmentCandidates.page -ne 1 -or $assignmentCandidates.pageSize -ne 1 -or $assignmentCandidates.totalCount -ne 1 -or @($assignmentCandidates.items).Count -ne 1 -or $assignmentCandidates.items[0].id -ne $student.id) {
+        throw 'El alumno elegible no apareció en el contrato paginado de candidatos.'
+    }
     $assignment = Invoke-Api -Method Post -Path "/api/v1/cases/$($legalCase.summary.id)/assignments" -Token $adminToken -ExpectedStatus 201 -Body @{
         studentId = $student.id
         isPrimary = $true
     }
+    $assignedStudentProfile = Invoke-Api -Method Get -Path "/api/v1/students/$($student.id)/profile" -Token $adminToken
+    $studentCaseAssignment = @($assignedStudentProfile.cases | Where-Object { $_.caseId -eq $legalCase.summary.id })[0]
+    if ($null -eq $studentCaseAssignment -or $studentCaseAssignment.assignmentId -ne $assignment.id -or $studentCaseAssignment.assignmentStatus -ne 'Active') {
+        throw 'La asignación no quedó visible y activa desde el perfil del alumno.'
+    }
     $null = Invoke-Api -Method Post -Path "/api/v1/cases/$($legalCase.summary.id)/timeline" -Token $adminToken -ExpectedStatus 201 -Body @{
         type = 'GeneralAction'; occurredAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); title = 'Paso general E2E'
-        description = 'Cobertura de línea de tiempo'; performedByStudentId = $student.id; documentId = $null; newStage = 'Preparación'; newStatus = $null
+        description = 'Cobertura de línea de tiempo'; performedByStudentId = $student.id; documentId = $null; newStage = $null; newStatus = $null
     }
 
     $studentLogin = Invoke-Api -Method Post -Path '/api/v1/auth/login' -Body @{
@@ -510,12 +559,29 @@ try {
     $null = Invoke-Api -Method Delete -Path "/api/v1/scan-sessions/$($scanSession.id)/pages/$($pageIds[2])" -Token $adminToken
     $scanSession = Invoke-Api -Method Post -Path "/api/v1/scan-sessions/$($scanSession.id)/draft" -Token $adminToken
     if ($scanSession.pageCount -ne 2) { throw 'Eliminar/reordenar páginas no actualizó el borrador.' }
+    if ([DateTimeOffset]$scanSession.expiresAtUtc -lt [DateTimeOffset]::UtcNow.AddDays(29)) { throw 'Guardar el borrador no respetó la retención configurada.' }
     $pagePreview = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/v1/scan-sessions/$($scanSession.id)/pages/$($pageIds[0])/content" -Headers @{ Authorization = "Bearer $adminToken" }
     if ([int]$pagePreview.StatusCode -ne 200 -or $pagePreview.Headers['Content-Type'] -notlike 'image/png*') { throw 'La página individual no se pudo consultar.' }
     $preview = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/v1/scan-sessions/$($scanSession.id)/preview" -Headers @{ Authorization = "Bearer $adminToken" }
     if ([int]$preview.StatusCode -ne 200 -or $preview.Headers['Content-Type'] -notlike 'application/pdf*') { throw 'La previsualización del escaneo no está disponible.' }
     $scannedDocument = Invoke-Api -Method Post -Path "/api/v1/scan-sessions/$($scanSession.id)/complete" -Token $adminToken
     if ($scannedDocument.source -ne 'Scanner' -or $scannedDocument.contextId -ne $legalCase.summary.id) { throw 'El escaneo no se convirtió en documento del expediente.' }
+
+    $caseRequirement = @($legalCase.requirements) | Select-Object -First 1
+    if ($null -ne $caseRequirement) {
+        $requirementScan = Invoke-Api -Method Post -Path '/api/v1/scan-sessions' -Token $adminToken -ExpectedStatus 201 -Body @{
+            contextType = 'CaseRequirement'; contextId = $caseRequirement.id; label = $caseRequirement.label
+            acquisitionProvider = 'BrowserImport'; resolutionDpi = 300; colorMode = 'Color'; duplex = $false
+        }
+        $requirementScan = Upload-ScanCapture -Token $adminToken -SessionId $requirementScan.id
+        $null = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/v1/scan-sessions/$($requirementScan.id)/preview" -Headers @{ Authorization = "Bearer $adminToken" }
+        $requirementScanDocument = Invoke-Api -Method Post -Path "/api/v1/scan-sessions/$($requirementScan.id)/complete" -Token $adminToken
+        $caseAfterRequirementScan = Invoke-Api -Method Get -Path "/api/v1/cases/$($legalCase.summary.id)" -Token $adminToken
+        $linkedRequirement = @($caseAfterRequirementScan.requirements) | Where-Object { $_.id -eq $caseRequirement.id } | Select-Object -First 1
+        if ($linkedRequirement.documentId -ne $requirementScanDocument.id -or $linkedRequirement.status -ne 'Submitted') {
+            throw 'El escaneo del requisito no quedó asociado atómicamente al checklist.'
+        }
+    }
     $cancelSession = Invoke-Api -Method Post -Path '/api/v1/scan-sessions' -Token $adminToken -ExpectedStatus 201 -Body @{
         contextType = 'LegalCase'; contextId = $legalCase.summary.id; label = 'Cancelación E2E'; acquisitionProvider = 'WIA'
         deviceId = 'WIA-E2E-002'; deviceName = 'Scanner E2E'; resolutionDpi = 300; colorMode = 'Grayscale'; duplex = $false
@@ -532,14 +598,28 @@ try {
     $document = Upload-TestDocument -Token $adminToken -ContextId $legalCase.summary.id
     $imageDocument = Upload-TestDocument -Token $adminToken -ContextId $legalCase.summary.id -Kind Image
     if ($imageDocument.contentType -ne 'image/png') { throw 'La imagen PNG no conservó su tipo de contenido.' }
+    $replacementImage = Upload-TestDocument -Token $adminToken -ContextId $legalCase.summary.id -Kind Image -ReplaceDocumentId $imageDocument.id
+    if ($replacementImage.versionNumber -ne 2 -or $replacementImage.previousVersionId -ne $imageDocument.id) {
+        throw 'La sustitución no creó una cadena de versiones válida.'
+    }
+    $documentHistory = Invoke-Api -Method Get -Path "/api/v1/documents/context/LegalCase/$($legalCase.summary.id)/history?page=1&pageSize=100" -Token $adminToken
+    $photoHistory = @($documentHistory.items | Where-Object { $_.label -eq 'Fotografía E2E' })
+    if ($photoHistory.Count -ne 2 -or (@($photoHistory.versionNumber | Sort-Object) -join ',') -ne '1,2') {
+        throw 'El historial documental no devolvió ambas versiones.'
+    }
+    $encodedPhotoLabel = [Uri]::EscapeDataString('Fotografía E2E')
+    $filteredPhotoHistory = Invoke-Api -Method Get -Path "/api/v1/documents/context/LegalCase/$($legalCase.summary.id)/history?label=$encodedPhotoLabel&page=1&pageSize=1" -Token $adminToken
+    if ($filteredPhotoHistory.totalCount -ne 2 -or $filteredPhotoHistory.totalPages -ne 2) {
+        throw 'El historial documental filtrado no conservó la paginación completa de la etiqueta.'
+    }
+    $null = Upload-TestDocument -Token $adminToken -ContextId $legalCase.summary.id -Kind Image -ReplaceDocumentId $imageDocument.id -ExpectedStatus 409
     $null = Invoke-Api -Method Get -Path "/api/v1/documents/$($document.id)" -Token $adminToken
     $null = Invoke-Api -Method Get -Path "/api/v1/documents?contextType=LegalCase&contextId=$($legalCase.summary.id)&page=1&pageSize=25" -Token $adminToken
     $documentDownload = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/v1/documents/$($document.id)/content" -Headers @{ Authorization = "Bearer $adminToken" }
     if ([int]$documentDownload.StatusCode -ne 200 -or $documentDownload.Headers['Content-Type'] -notlike 'application/pdf*') { throw 'El proveedor local no devolvió el documento cargado.' }
-    if (@($legalCase.requirements).Count -gt 0) {
-        $caseRequirement = @($legalCase.requirements)[0]
+    if ($null -ne $caseRequirement) {
         $null = Invoke-Api -Method Put -Path "/api/v1/cases/$($legalCase.summary.id)/requirements/$($caseRequirement.id)" -Token $adminToken -Body @{
-            status = 'Accepted'; documentId = $document.id; dataValue = $null; conditionMet = $true
+            status = 'Accepted'; documentId = $requirementScanDocument.id; dataValue = $null; conditionMet = $true
             documentIssueDate = (Get-Date).ToString('yyyy-MM-dd'); notes = 'Requisito validado E2E'
         }
     }
@@ -561,24 +641,45 @@ try {
         observations = 'Revisión E2E con cambios'
         reviewedDocumentId = $null
     }
+    $memorialVersionDocument = Upload-TestDocument -Token $adminToken -ContextId $memorial.id -ContextType Memorial -Label 'Memorial corregido E2E'
     $memorial = Invoke-Api -Method Post -Path "/api/v1/cases/$($legalCase.summary.id)/memorials/$($memorial.id)/versions" -Token $adminToken -Body @{
-        documentId = $document.id; submittedByStudentId = $student.id; notes = 'Versión corregida E2E'
+        documentId = $memorialVersionDocument.id; submittedByStudentId = $student.id; notes = 'Versión corregida E2E'
+    }
+    $null = Invoke-Api -Method Post -Path "/api/v1/cases/$($legalCase.summary.id)/memorials/$($memorial.id)/reviews" -Token $adminToken -ExpectedStatus 409 -Body @{
+        versionId = $versionId; outcome = 'Approved'; observations = 'Una versión anterior no puede aprobarse'; reviewedDocumentId = $null
     }
     $versionId = @($memorial.versions | Sort-Object versionNumber -Descending)[0].id
     $memorial = Invoke-Api -Method Post -Path "/api/v1/cases/$($legalCase.summary.id)/memorials/$($memorial.id)/reviews" -Token $adminToken -Body @{
         versionId = $versionId; outcome = 'Approved'; observations = 'Revisión E2E aprobada'; reviewedDocumentId = $null
     }
+    $receiptDocument = Upload-TestDocument -Token $adminToken -ContextId $memorial.id -ContextType Memorial -Label 'Constancia de presentación E2E'
     $null = Invoke-Api -Method Post -Path "/api/v1/cases/$($legalCase.summary.id)/memorials/$($memorial.id)/presentation" -Token $adminToken -ExpectedStatus 204 -Body @{
         presentedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
         result = 'Recibido por el juzgado'
-        presentedDocumentId = $document.id
-        receiptDocumentId = $null
+        presentedDocumentId = $memorialVersionDocument.id
+        receiptDocumentId = $receiptDocument.id
     }
     $null = Invoke-Api -Method Post -Path "/api/v1/cases/$($legalCase.summary.id)/court-notifications" -Token $adminToken -ExpectedStatus 204 -Body @{
         notifiedAtUtc = [DateTimeOffset]::UtcNow.ToString('o')
         description = 'Notificación E2E'
         documentId = $document.id
         newStage = 'Notificado'
+    }
+    $caseAfterCourtFlow = Invoke-Api -Method Get -Path "/api/v1/cases/$($legalCase.summary.id)" -Token $adminToken
+    if (@($caseAfterCourtFlow.presentations).Count -ne 1 -or $caseAfterCourtFlow.presentations[0].receiptDocumentId -ne $receiptDocument.id) {
+        throw 'La presentación o su constancia no se recuperaron en el detalle del expediente.'
+    }
+    if (@($caseAfterCourtFlow.courtNotifications).Count -ne 1 -or $caseAfterCourtFlow.courtNotifications[0].documentId -ne $document.id) {
+        throw 'La notificación judicial no se recuperó en el detalle del expediente.'
+    }
+    if ($env:Storage__Provider -eq 'S3') {
+        $bucketName = $env:Storage__S3__BucketName
+        $objectPrefix = $env:Storage__S3__KeyPrefix
+        if ($bucketName -notmatch '^[a-z0-9][a-z0-9.-]+$' -or $objectPrefix -notmatch '^bufete-e2e/[a-f0-9]{12}$') {
+            throw 'El destino temporal de objetos no superó la validación de seguridad.'
+        }
+        $storedObjects = & docker compose exec -T minio sh -c 'mc alias set e2e http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc ls --recursive "e2e/$1/$2"' -- $bucketName $objectPrefix
+        if ($LASTEXITCODE -ne 0 -or @($storedObjects).Count -lt 1) { throw 'No se encontraron objetos físicos de esta ejecución en MinIO.' }
     }
 
     $activity = Invoke-Api -Method Post -Path '/api/v1/activities' -Token $adminToken -ExpectedStatus 201 -Body @{
@@ -600,9 +701,14 @@ try {
 
     $today = (Get-Date).ToString('yyyy-MM-dd')
     $report = Invoke-Api -Method Post -Path '/api/v1/reports/weekly' -Token $adminToken -ExpectedStatus 201 -Body @{ start = $today; end = $today }
+    $reportPage = Invoke-Api -Method Get -Path '/api/v1/reports?page=1&pageSize=1' -Token $adminToken
+    if ($reportPage.page -ne 1 -or $reportPage.pageSize -ne 1 -or $reportPage.totalCount -lt 1 -or @($reportPage.items).Count -ne 1) {
+        throw 'El historial paginado de reportes no respeta su contrato.'
+    }
     $null = Invoke-Api -Method Get -Path "/api/v1/reports/$($report.id)" -Token $adminToken
     $reportPrint = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/v1/reports/$($report.id)/print" -Headers @{ Authorization = "Bearer $adminToken" }
     if ([int]$reportPrint.StatusCode -ne 200 -or $reportPrint.Headers['Content-Type'] -notlike 'text/html*') { throw 'El reporte imprimible no está disponible.' }
+    if ($reportPrint.Content -notmatch [regex]::Escape($adminProfile.fullName)) { throw 'El reporte imprimible no identifica al responsable por nombre.' }
     $report = Invoke-Api -Method Post -Path "/api/v1/reports/$($report.id)/review" -Token $adminToken
     $report = Invoke-Api -Method Post -Path "/api/v1/reports/$($report.id)/send" -Token $adminToken -Body @{
         recipients = @('qa@example.test')
@@ -621,6 +727,19 @@ try {
     $null = Invoke-Api -Method Put -Path "/api/v1/cases/$($legalCase.summary.id)/assignments/$($assignment.id)/end" -Token $adminToken -ExpectedStatus 204 -Body @{
         status = 'Completed'; reason = 'Fin de asignación E2E'
     }
+    $caseAfterUnassignment = Invoke-Api -Method Get -Path "/api/v1/cases/$($legalCase.summary.id)" -Token $adminToken
+    $endedCaseAssignment = @($caseAfterUnassignment.summary.assignments | Where-Object { $_.id -eq $assignment.id })[0]
+    if ($null -eq $endedCaseAssignment -or $endedCaseAssignment.status -ne 'Completed' -or $null -eq $endedCaseAssignment.endedAtUtc -or $endedCaseAssignment.endReason -ne 'Fin de asignación E2E') {
+        throw 'La desasignación no quedó reflejada en el expediente.'
+    }
+    $studentAfterUnassignment = Invoke-Api -Method Get -Path "/api/v1/students/$($student.id)/profile" -Token $adminToken
+    $endedStudentAssignment = @($studentAfterUnassignment.cases | Where-Object { $_.assignmentId -eq $assignment.id })[0]
+    if ($null -eq $endedStudentAssignment -or $endedStudentAssignment.assignmentStatus -ne 'Completed' -or $endedStudentAssignment.endReason -ne 'Fin de asignación E2E') {
+        throw 'La desasignación no conservó estado y motivo en el histórico del alumno.'
+    }
+    if (-not (@($caseAfterUnassignment.timeline) | Where-Object { $_.type -eq 'Assignment' -and $_.title -eq 'Asignación finalizada' })) {
+        throw 'La desasignación no generó el movimiento esperado en la bitácora.'
+    }
 
     $updatedSelf = Invoke-Api -Method Put -Path '/api/v1/users/me' -Token $studentToken -Body @{ fullName = "$($student.fullName) Actualizado"; email = $studentUser.email }
     $updatedStudent = Invoke-Api -Method Get -Path "/api/v1/students/$($student.id)" -Token $studentToken
@@ -635,14 +754,74 @@ try {
     $null = Invoke-Api -Method Post -Path "/api/v1/users/$($studentUser.id)/reset-password" -Token $adminToken -ExpectedStatus 204 -Body @{ newPassword = $studentPasswordReset }
     $null = Invoke-Api -Method Post -Path '/api/v1/auth/login' -Body @{ email = $studentUser.email; password = $studentPasswordReset }
 
+    $raceLogin = Invoke-Api -Method Post -Path '/api/v1/auth/login' -Body @{ email = $env:BootstrapAdmin__Email; password = $env:BootstrapAdmin__Password }
+    $raceClient = [System.Net.Http.HttpClient]::new()
+    $racePayload = (@{ refreshToken = $raceLogin.refreshToken } | ConvertTo-Json -Compress)
+    $raceContentA = [System.Net.Http.StringContent]::new($racePayload, [System.Text.Encoding]::UTF8, 'application/json')
+    $raceContentB = [System.Net.Http.StringContent]::new($racePayload, [System.Text.Encoding]::UTF8, 'application/json')
+    try {
+        $raceTaskA = $raceClient.PostAsync("$baseUrl/api/v1/auth/refresh", $raceContentA)
+        $raceTaskB = $raceClient.PostAsync("$baseUrl/api/v1/auth/refresh", $raceContentB)
+        $raceResponseA = $raceTaskA.GetAwaiter().GetResult()
+        $raceResponseB = $raceTaskB.GetAwaiter().GetResult()
+        $raceStatuses = @([int]$raceResponseA.StatusCode, [int]$raceResponseB.StatusCode) | Sort-Object
+        if ($raceStatuses[0] -ne 200 -or $raceStatuses[1] -ne 401) {
+            throw "La rotación concurrente debía aceptar una sola petición. Estados: $($raceStatuses -join ', ')."
+        }
+    }
+    finally {
+        $raceContentA.Dispose(); $raceContentB.Dispose(); $raceClient.Dispose()
+    }
+
     $rotationLogin = Invoke-Api -Method Post -Path '/api/v1/auth/login' -Body @{ email = $env:BootstrapAdmin__Email; password = $env:BootstrapAdmin__Password }
     $rotatedSession = Invoke-Api -Method Post -Path '/api/v1/auth/refresh' -Body @{ refreshToken = $rotationLogin.refreshToken }
     $null = Invoke-Api -Method Post -Path '/api/v1/auth/revoke' -Token $rotatedSession.accessToken -ExpectedStatus 204 -Body @{ refreshToken = $rotatedSession.refreshToken }
     $null = Invoke-Api -Method Post -Path '/api/v1/auth/refresh' -ExpectedStatus 401 -Body @{ refreshToken = $rotatedSession.refreshToken }
+
+    $null = Invoke-Api -Method Delete -Path "/api/v1/cases/$($legalCase.summary.id)" -Token $adminToken -ExpectedStatus 204 -Body @{ reason = 'Validación E2E de papelera' }
+    $hiddenCases = Invoke-Api -Method Get -Path "/api/v1/cases?search=$suffix&page=1&pageSize=10" -Token $adminToken
+    if ($hiddenCases.totalCount -ne 0) { throw 'El expediente eliminado siguió visible en el listado operativo.' }
+    $null = Invoke-Api -Method Get -Path "/api/v1/documents/$($document.id)" -Token $adminToken -ExpectedStatus 404
+    $deletedCases = Invoke-Api -Method Get -Path "/api/v1/deleted-records?type=LegalCase&search=$($legalCase.summary.caseNumber)&page=1&pageSize=10" -Token $adminToken
+    if (-not (@($deletedCases.items) | Where-Object { $_.id -eq $legalCase.summary.id })) { throw 'El expediente no apareció en la papelera.' }
+    $null = Invoke-Api -Method Post -Path "/api/v1/deleted-records/LegalCase/$($legalCase.summary.id)/restore" -Token $adminToken -ExpectedStatus 204
+    $null = Invoke-Api -Method Get -Path "/api/v1/cases/$($legalCase.summary.id)" -Token $adminToken
+    $restoredCaseDocument = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/v1/documents/$($document.id)/content" -Headers @{ Authorization = "Bearer $adminToken" }
+    if ([int]$restoredCaseDocument.StatusCode -ne 200) { throw 'El documento del expediente no se restauró con su propietario.' }
+
+    $null = Invoke-Api -Method Delete -Path "/api/v1/clients/$($client.id)" -Token $adminToken -ExpectedStatus 204 -Body @{ reason = 'Validación E2E de cascada de cliente' }
+    $hiddenClients = Invoke-Api -Method Get -Path "/api/v1/clients?search=$suffix&page=1&pageSize=10" -Token $adminToken
+    if ($hiddenClients.totalCount -ne 0) { throw 'El cliente eliminado siguió visible en el listado operativo.' }
+    $null = Invoke-Api -Method Get -Path "/api/v1/cases/$($legalCase.summary.id)" -Token $adminToken -ExpectedStatus 404
+    $null = Invoke-Api -Method Post -Path "/api/v1/deleted-records/Client/$($client.id)/restore" -Token $adminToken -ExpectedStatus 204
+    $null = Invoke-Api -Method Get -Path "/api/v1/clients/$($client.id)" -Token $adminToken
+    $null = Invoke-Api -Method Get -Path "/api/v1/cases/$($legalCase.summary.id)" -Token $adminToken
+    $null = Invoke-Api -Method Get -Path "/api/v1/documents/$($document.id)" -Token $adminToken
+
+    $studentSessionBeforeDeletion = Invoke-Api -Method Post -Path '/api/v1/auth/login' -Body @{ email = $studentUser.email; password = $studentPasswordReset }
+    $null = Invoke-Api -Method Delete -Path "/api/v1/students/$($student.id)" -Token $adminToken -ExpectedStatus 204 -Body @{ reason = 'Validación E2E de alumno y sesión' }
+    $null = Invoke-Api -Method Get -Path '/api/v1/auth/me' -Token $studentSessionBeforeDeletion.accessToken -ExpectedStatus 401
+    $null = Invoke-Api -Method Post -Path '/api/v1/auth/refresh' -ExpectedStatus 401 -Body @{ refreshToken = $studentSessionBeforeDeletion.refreshToken }
+    $hiddenStudents = Invoke-Api -Method Get -Path "/api/v1/students?search=$suffix&page=1&pageSize=10" -Token $adminToken
+    if ($hiddenStudents.totalCount -ne 0) { throw 'El alumno eliminado siguió visible en el listado operativo.' }
+    $null = Invoke-Api -Method Get -Path "/api/v1/documents/$($studentPhotoDocument.id)" -Token $adminToken -ExpectedStatus 404
+    $null = Invoke-Api -Method Get -Path "/api/v1/documents/$($studentIdentityDocument.id)" -Token $adminToken -ExpectedStatus 404
+    $deletedStudents = Invoke-Api -Method Get -Path "/api/v1/deleted-records?type=Student&search=$suffix&page=1&pageSize=10" -Token $adminToken
+    if (-not (@($deletedStudents.items) | Where-Object { $_.id -eq $student.id })) { throw 'El alumno no apareció en la papelera.' }
+    $null = Invoke-Api -Method Post -Path "/api/v1/deleted-records/Student/$($student.id)/restore" -Token $adminToken -ExpectedStatus 204
+    $null = Invoke-Api -Method Get -Path "/api/v1/students/$($student.id)" -Token $adminToken
+    $null = Invoke-Api -Method Get -Path "/api/v1/documents/$($studentPhotoDocument.id)" -Token $adminToken
+    $null = Invoke-Api -Method Get -Path "/api/v1/documents/$($studentIdentityDocument.id)" -Token $adminToken
+    $null = Invoke-Api -Method Post -Path '/api/v1/auth/login' -Body @{ email = $studentUser.email; password = $studentPasswordReset }
+
     $null = Invoke-Api -Method Delete -Path "/api/v1/users/$($studentUser.id)" -Token $adminToken -ExpectedStatus 204
 
     $search = Invoke-Api -Method Get -Path "/api/v1/search?term=$suffix" -Token $adminToken
     if ($search.totalCount -lt 2) { throw 'La búsqueda no devolvió cliente y alumno.' }
+    $searchTypes = @($search.items | ForEach-Object { $_.resultType })
+    if ('Client' -notin $searchTypes -or 'Student' -notin $searchTypes) {
+        throw "La búsqueda devolvió tipos incompatibles con el frontend: $($searchTypes -join ', ')."
+    }
     $audit = Invoke-Api -Method Get -Path '/api/v1/audit?page=1&pageSize=20' -Token $adminToken
     if ($audit.totalCount -lt 1) { throw 'No se generó trazabilidad.' }
 
@@ -656,7 +835,7 @@ try {
         StudentAndEnrollmentFlow = 'OK'
         StudentAuthenticationAndIsolation = 'OK'
         MultipageScanSessionFlow = 'OK'
-        LocalObjectStorageFlow = 'OK'
+        S3CompatibleObjectStorageFlow = 'OK'
         CaseAssignmentFlow = 'OK'
         DocumentUploadFlow = 'OK'
         MemorialReviewPresentationFlow = 'OK'
@@ -666,6 +845,8 @@ try {
         CrudAndContractCoverage = 'OK'
         RetentionPreviewSafety = 'OK'
         TokenRotationAndRevocation = 'OK'
+        SoftDeletionRestoreAndSessionRevocation = 'OK'
+        DocumentVersionHistory = 'OK'
     }
 }
 finally {
@@ -680,6 +861,13 @@ finally {
         if ($process.ExecutablePath -and $process.ExecutablePath.StartsWith($repositoryRoot, [StringComparison]::OrdinalIgnoreCase)) {
             Stop-Process -Id $item.OwningProcess -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    if ($env:Storage__Provider -eq 'S3' -and
+        $env:Storage__S3__BucketName -match '^[a-z0-9][a-z0-9.-]+$' -and
+        $env:Storage__S3__KeyPrefix -match '^bufete-e2e/[a-f0-9]{12}$') {
+        & docker compose exec -T minio sh -c 'mc alias set e2e http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc rm --recursive --force "e2e/$1/$2" >/dev/null' -- $env:Storage__S3__BucketName $env:Storage__S3__KeyPrefix
+        if ($LASTEXITCODE -ne 0) { Write-Warning 'No se pudo limpiar el prefijo temporal de MinIO.' }
     }
 
     if ($databaseCreated -and -not $KeepDatabase) {

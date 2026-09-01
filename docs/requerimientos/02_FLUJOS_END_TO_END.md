@@ -384,3 +384,25 @@ no cumple su regla material.
 
 **Resultado:** el expediente diferencia entre archivo presente y requisito
 realmente cumplido.
+
+## E2E-16. Eliminación lógica y restauración
+
+**Objetivo:** retirar un registro de la operación diaria sin destruir la
+trazabilidad ni los documentos.
+
+**Actores:** secretaría o administrador para eliminar; administrador para
+consultar y restaurar.
+
+1. El actor abre un cliente, alumno o expediente y selecciona `Eliminar`.
+2. El sistema explica el alcance y solicita confirmación; puede registrarse un
+   motivo.
+3. El backend marca el registro, sus dependencias aplicables y documentos con un
+   mismo identificador de lote, fecha y usuario responsable.
+4. El registro desaparece de búsquedas, listados y accesos ordinarios.
+5. El administrador abre `Eliminados`, filtra el registro y revisa quién lo
+   eliminó, cuándo y por qué.
+6. Si corresponde, confirma `Restaurar`.
+7. El sistema recupera el lote y registra la restauración en auditoría.
+
+**Resultado:** el registro vuelve a la operación sin pérdida física de archivos
+ni de historial. La depuración irreversible permanece como un flujo separado.

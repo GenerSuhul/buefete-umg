@@ -2,7 +2,7 @@ using BufeteJuridico.Domain.Common;
 
 namespace BufeteJuridico.Domain.Clients;
 
-public sealed class Client : AuditableEntity
+public sealed class Client : SoftDeletableEntity
 {
     public string ReceptionNumber { get; set; } = string.Empty;
 

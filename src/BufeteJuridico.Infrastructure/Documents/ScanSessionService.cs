@@ -2,7 +2,9 @@ using System.Security.Cryptography;
 using System.Text;
 using BufeteJuridico.Application.Common;
 using BufeteJuridico.Application.Documents;
+using BufeteJuridico.Domain.Cases;
 using BufeteJuridico.Domain.Documents;
+using BufeteJuridico.Domain.Students;
 using BufeteJuridico.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -227,7 +229,9 @@ internal sealed class ScanSessionService(
     {
         var session = await GetOwnedSessionAsync(id, cancellationToken);
         await EnsureOpenAsync(session, cancellationToken);
-        Touch(session);
+        var now = timeProvider.GetUtcNow();
+        session.LastSavedAtUtc = now;
+        session.ExpiresAtUtc = now.AddDays(Math.Clamp(scannerOptions.Value.DraftRetentionDays, 1, 365));
         await dbContext.SaveChangesAsync(cancellationToken);
         return Map(session);
     }
@@ -308,6 +312,19 @@ internal sealed class ScanSessionService(
             session.CompletedAtUtc = now;
             session.PageCount = pages.Count;
             dbContext.Documents.Add(document);
+
+            if (session.ContextType == DocumentContextType.CaseRequirement)
+            {
+                var requirement = await dbContext.CaseRequirements
+                    .SingleOrDefaultAsync(item => item.Id == session.ContextId, cancellationToken)
+                    ?? throw new NotFoundException("No se encontró el requisito del expediente.");
+                requirement.DocumentId = document.Id;
+                if (requirement.Status == RequirementFulfillmentStatus.Pending)
+                    requirement.Status = RequirementFulfillmentStatus.Submitted;
+                requirement.ReviewedAtUtc = null;
+                requirement.ReviewedByUserId = null;
+            }
+
             await dbContext.SaveChangesAsync(cancellationToken);
         }
         catch
@@ -370,28 +387,38 @@ internal sealed class ScanSessionService(
     {
         var pages = session.Pages.Where(item => item.Status == ScanPageStatus.Ready).OrderBy(item => item.Position).ToList();
         var resources = new List<IDisposable>();
+        var importedPdfs = new Dictionary<string, PdfDocument>(StringComparer.Ordinal);
         try
         {
             using var output = new PdfDocument();
             foreach (var page in pages)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                await using var sourceStream = await fileStorage.OpenReadAsync(page.OriginalStorageKey, cancellationToken);
-                var buffer = new MemoryStream();
-                await sourceStream.CopyToAsync(buffer, cancellationToken);
-                buffer.Position = 0;
-                resources.Add(buffer);
-
                 if (page.ContentType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase))
                 {
-                    var imported = PdfReader.Open(buffer, PdfDocumentOpenMode.Import);
-                    resources.Add(imported);
+                    if (!importedPdfs.TryGetValue(page.OriginalStorageKey, out var imported))
+                    {
+                        await using var sourceStream = await fileStorage.OpenReadAsync(page.OriginalStorageKey, cancellationToken);
+                        var buffer = new MemoryStream();
+                        await sourceStream.CopyToAsync(buffer, cancellationToken);
+                        buffer.Position = 0;
+                        resources.Add(buffer);
+                        imported = PdfReader.Open(buffer, PdfDocumentOpenMode.Import);
+                        resources.Add(imported);
+                        importedPdfs.Add(page.OriginalStorageKey, imported);
+                    }
+
                     var sourceIndex = Math.Clamp((page.SourcePageNumber ?? 1) - 1, 0, imported.PageCount - 1);
                     var target = output.AddPage(imported.Pages[sourceIndex]);
                     target.Rotate = (target.Rotate + page.RotationDegrees) % 360;
                 }
                 else
                 {
+                    await using var sourceStream = await fileStorage.OpenReadAsync(page.OriginalStorageKey, cancellationToken);
+                    var buffer = new MemoryStream();
+                    await sourceStream.CopyToAsync(buffer, cancellationToken);
+                    buffer.Position = 0;
+                    resources.Add(buffer);
                     var image = XImage.FromStream(buffer);
                     resources.Add(image);
                     var target = output.AddPage();
@@ -429,7 +456,8 @@ internal sealed class ScanSessionService(
         session.ExpiresAtUtc = DraftExpiresAt(now);
     }
 
-    private DateTimeOffset DraftExpiresAt(DateTimeOffset now) => now.AddDays(Math.Clamp(scannerOptions.Value.DraftRetentionDays, 1, 365));
+    private DateTimeOffset DraftExpiresAt(DateTimeOffset now) =>
+        now.AddMinutes(Math.Clamp(scannerOptions.Value.SessionMinutes, 5, 240));
 
     private async Task ValidateReplacementAsync(Guid? documentId, DocumentContextType contextType, Guid contextId, string label, CancellationToken cancellationToken)
     {

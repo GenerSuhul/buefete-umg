@@ -100,7 +100,13 @@ npm run dev
 - PostgreSQL local: `127.0.0.1:55432`
 - Consola MinIO: `http://127.0.0.1:59001`
 
-Los secretos se generan localmente y nunca deben agregarse al repositorio.
+Los secretos se generan localmente y nunca deben agregarse al repositorio. En
+`Development`, la API carga el `.env` de la raíz como configuración local de
+respaldo; variables de entorno definidas explícitamente conservan prioridad.
+Por ello `BufeteJuridico.Api.csproj` puede iniciarse directamente desde Visual
+Studio o mediante `dotnet run --launch-profile http`. En producción no se carga
+`.env`: la plataforma debe inyectar los secretos y la API falla rápidamente si
+falta alguno de los valores obligatorios.
 
 ## Calidad y validación
 
@@ -123,7 +129,7 @@ de producción. GitHub Actions ejecuta los mismos controles en cada cambio.
 - [Base de datos y operación](docs/arquitectura/03_BASE_DATOS_Y_OPERACION_LOCAL.md)
 - [Integración con escáner](docs/arquitectura/05_INTEGRACION_ESCANER.md)
 - [Producción y alta disponibilidad](docs/arquitectura/09_ARQUITECTURA_PRODUCCION_ALTA_DISPONIBILIDAD.md)
-- [Auditoría técnica integral](docs/auditoria/AUDITORIA_TECNICA_INTEGRAL_2026-08-21.md)
+- [Auditoría integral vigente](docs/auditoria/AUDITORIA_CODIGO_INTEGRAL_2026-09-01.md)
 
 ## Estado
 

@@ -15,7 +15,8 @@ import {
   Badge,
   Button,
   Card,
-  DatePickerField,
+  AppDatePicker,
+  DateRangePickerField,
   ErrorState,
   Field,
   FilePicker,
@@ -25,16 +26,27 @@ import {
   ReadOnlyValue,
   WizardProgress,
   WizardStep,
+  Select,
+  TimePickerField,
 } from "../components/ui";
 import { useAuth } from "../context/AuthContext";
 import { dataSource } from "../data/dataSource";
+import { feedbackHandled } from "../components/ui/feedback/operationFeedback";
+import { useNotify } from "../components/ui/Feedback";
 import { useAsyncData } from "../hooks/useAsyncData";
 import { formatDate } from "../utils/format";
+import { toLocalDateOnly } from "../utils/date";
+import {
+  formatCui,
+  formatGuatemalaPhone,
+  isCompleteCui,
+  isCompleteGuatemalaPhone,
+} from "../utils/inputMasks";
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => toLocalDateOnly();
 const emptyForm = {
   fullName: "",
-  ageAtRegistration: "",
+  birthDate: "",
   studentCardNumber: "",
   dpi: "",
   semester: "9",
@@ -121,12 +133,14 @@ const steps = [
 
 export function StudentsPage() {
   const { user } = useAuth();
+  const notify = useNotify();
   const canWrite = Boolean(
     user?.permissions.includes("*") ||
       user?.permissions.includes("students.write"),
   );
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [newOpen, setNewOpen] = useState(false);
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<StudentForm>(emptyForm);
@@ -134,10 +148,10 @@ export function StudentsPage() {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const loader = useMemo(
-    () => () => dataSource.listStudents({ search, pageSize: 20 }),
-    [search],
+    () => () => dataSource.listStudents({ search, page, pageSize: 20 }),
+    [search, page],
   );
-  const { data, error, loading, reload } = useAsyncData(loader, [search]);
+  const { data, error, loading, reload } = useAsyncData(loader, [search, page]);
   const passwordMismatch = Boolean(
     form.confirmPassword && form.password !== form.confirmPassword,
   );
@@ -155,16 +169,20 @@ export function StudentsPage() {
     if (
       target === 0 &&
       (!form.fullName.trim() ||
-        !form.ageAtRegistration ||
+        !form.birthDate ||
         !form.studentCardNumber.trim() ||
         !form.dpi.trim() ||
         !form.email.trim())
     )
-      return "Nombre, edad, carné, DPI y correo son obligatorios.";
+      return "Nombre, fecha de nacimiento, carné, DPI y correo son obligatorios.";
     if (target === 0 && !/^\S+@\S+\.\S+$/.test(form.email.trim()))
       return "Ingrese un correo electrónico válido; será la identidad de acceso.";
+    if (target === 0 && !isCompleteCui(form.dpi))
+      return "El DPI debe contener los 13 dígitos del CUI.";
     if (target === 1 && !form.residenceAddress.trim())
       return "La dirección de residencia es obligatoria.";
+    if (target === 1 && [form.mobilePhone, form.homePhone, form.workPhone].some((value) => !isCompleteGuatemalaPhone(value)))
+      return "Los teléfonos deben contener 8 dígitos o el prefijo +502 seguido de 8 dígitos.";
     if (
       target === 2 &&
       (!form.registrationDate || !form.modality || !form.initialStatus)
@@ -205,11 +223,12 @@ export function StudentsPage() {
     setBusy(true);
     setFormError(null);
     try {
-      const result = await dataSource.registerStudent({
+      const result = await notify.track((async () => {
+        const registration = await dataSource.registerStudent(feedbackHandled({
         student: {
           fullName: form.fullName.trim(),
-          birthDate: null,
-          ageAtRegistration: Number(form.ageAtRegistration),
+          birthDate: form.birthDate,
+          ageAtRegistration: null,
           studentCardNumber: form.studentCardNumber.trim(),
           dpi: form.dpi.trim(),
           semester: Number(form.semester),
@@ -241,33 +260,39 @@ export function StudentsPage() {
           participationStartDate: form.startDate || form.registrationDate,
           participationEndDate: form.endDate || null,
         },
-      });
+      }));
       await Promise.all(
         studentDocumentFields.map(async (field) => {
           const file = documentFiles[field.key];
-          const requirement = result.enrollment.requirements.find((item) =>
+          const requirement = registration.enrollment.requirements.find((item) =>
             item.label.includes(field.match),
           );
           if (!file || !requirement) return;
-          const document = await dataSource.uploadDocument({
+          const document = await dataSource.uploadDocument(feedbackHandled({
             file,
             contextType: "Enrollment",
-            contextId: result.enrollment.id,
+            contextId: registration.enrollment.id,
             label: requirement.label,
-          });
+          }));
           await dataSource.updateStudentRequirement(
-            result.enrollment.id,
+            registration.enrollment.id,
             requirement.id,
-            {
+            feedbackHandled({
               status: "Submitted",
               documentId: document.id,
               dataValue: null,
               documentIssueDate: null,
               notes: null,
-            },
+            }),
           );
         }),
       );
+        return registration;
+      })(), {
+        loading: { title: "Inscribiendo alumno…", message: "Se está creando el perfil, el acceso y la papelería seleccionada." },
+        success: { title: "Alumno inscrito", message: `${form.fullName.trim()} fue registrado con su acceso académico.` },
+        error: { title: "No se pudo inscribir al alumno" },
+      });
       setNewOpen(false);
       await reload();
       navigate(`/personas/alumnos/${result.student.id}`);
@@ -345,7 +370,7 @@ export function StudentsPage() {
       <Card className="directory-card">
         <FilterBar
           value={search}
-          onChange={setSearch}
+          onChange={(value) => { setSearch(value); setPage(1); }}
           placeholder="Buscar por nombre, carné o correo…"
         />
         {loading ? (
@@ -403,6 +428,7 @@ export function StudentsPage() {
                 page={data.page}
                 totalPages={data.totalPages}
                 totalCount={data.totalCount}
+                onPageChange={setPage}
               />
             )}
           </>
@@ -441,17 +467,14 @@ export function StudentsPage() {
                 autoComplete="name"
               />
             </Field>
-            <Field label="Edad">
-              <input
-                type="number"
-                min="15"
-                max="100"
-                value={form.ageAtRegistration}
-                onChange={(event) =>
-                  update("ageAtRegistration", event.target.value)
-                }
-              />
-            </Field>
+            <AppDatePicker
+              label="Fecha de nacimiento"
+              preset="birthDate"
+              value={form.birthDate}
+              onChange={(birthDate) => update("birthDate", birthDate)}
+              max={form.registrationDate}
+              required
+            />
             <Field label="Carné universitario">
               <input
                 value={form.studentCardNumber}
@@ -464,28 +487,30 @@ export function StudentsPage() {
               <input
                 inputMode="numeric"
                 value={form.dpi}
-                onChange={(event) => update("dpi", event.target.value)}
+                maxLength={15}
+                placeholder="0000 00000 0000"
+                onChange={(event) => update("dpi", formatCui(event.target.value))}
               />
             </Field>
             <Field label="Semestre">
-              <select
+              <Select
                 value={form.semester}
                 onChange={(event) => update("semester", event.target.value)}
               >
                 <option value="8">8.º</option>
                 <option value="9">9.º</option>
                 <option value="10">10.º</option>
-              </select>
+              </Select>
             </Field>
             <Field label="Jornada de estudio">
-              <select
+              <Select
                 value={form.studyShift}
                 onChange={(event) => update("studyShift", event.target.value)}
               >
                 <option>Matutina</option>
                 <option>Vespertina</option>
                 <option>Nocturna</option>
-              </select>
+              </Select>
             </Field>
             <Field
               label="Correo electrónico"
@@ -517,15 +542,19 @@ export function StudentsPage() {
             <Field label="Teléfono móvil">
               <input
                 type="tel"
+                inputMode="tel"
+                placeholder="0000 0000"
                 value={form.mobilePhone}
-                onChange={(event) => update("mobilePhone", event.target.value)}
+                onChange={(event) => update("mobilePhone", formatGuatemalaPhone(event.target.value))}
               />
             </Field>
             <Field label="Teléfono residencial">
               <input
                 type="tel"
+                inputMode="tel"
+                placeholder="0000 0000"
                 value={form.homePhone}
-                onChange={(event) => update("homePhone", event.target.value)}
+                onChange={(event) => update("homePhone", formatGuatemalaPhone(event.target.value))}
               />
             </Field>
             <Field label="Lugar de trabajo">
@@ -537,8 +566,10 @@ export function StudentsPage() {
             <Field label="Teléfono de trabajo">
               <input
                 type="tel"
+                inputMode="tel"
+                placeholder="0000 0000"
                 value={form.workPhone}
-                onChange={(event) => update("workPhone", event.target.value)}
+                onChange={(event) => update("workPhone", formatGuatemalaPhone(event.target.value))}
               />
             </Field>
             <Field label="Jefe inmediato">
@@ -563,7 +594,7 @@ export function StudentsPage() {
             description="Defina la modalidad, el estado, el horario y el período de práctica."
           >
             <Field label="Modalidad">
-              <select
+              <Select
                 value={form.modality}
                 onChange={(event) => update("modality", event.target.value)}
               >
@@ -574,10 +605,13 @@ export function StudentsPage() {
                 <option value="AdHonoremSecretariat">
                   Secretaría ad honorem
                 </option>
-              </select>
+              </Select>
             </Field>
-            <Field label="Estado inicial">
-              <select
+            <Field
+              label="Flujo de inscripción"
+              hint="Borrador permite completar datos; Presentada inicia la revisión. Los casos se asignan después de aprobar los requisitos."
+            >
+              <Select
                 value={form.initialStatus}
                 onChange={(event) =>
                   update("initialStatus", event.target.value)
@@ -585,10 +619,11 @@ export function StudentsPage() {
               >
                 <option value="Draft">Borrador</option>
                 <option value="Submitted">Presentada</option>
-              </select>
+              </Select>
             </Field>
-            <DatePickerField
+            <AppDatePicker
               label="Fecha de inscripción"
+              preset="processDate"
               value={form.registrationDate}
               onChange={(value) => update("registrationDate", value)}
               required
@@ -612,29 +647,22 @@ export function StudentsPage() {
                 placeholder="Ej. lunes y miércoles"
               />
             </Field>
-            <Field label="Hora de inicio">
-              <input
-                type="time"
-                value={form.startTime}
-                onChange={(event) => update("startTime", event.target.value)}
-              />
-            </Field>
-            <Field label="Hora de finalización">
-              <input
-                type="time"
-                value={form.endTime}
-                onChange={(event) => update("endTime", event.target.value)}
-              />
-            </Field>
-            <DatePickerField
-              label="Inicio del período"
-              value={form.startDate}
-              onChange={(value) => update("startDate", value)}
+            <TimePickerField
+              label="Hora de inicio"
+              value={form.startTime}
+              onChange={(value) => update("startTime", value)}
             />
-            <DatePickerField
-              label="Fin del período"
-              value={form.endDate}
-              onChange={(value) => update("endDate", value)}
+            <TimePickerField
+              label="Hora de finalización"
+              value={form.endTime}
+              onChange={(value) => update("endTime", value)}
+            />
+            <DateRangePickerField
+              label="Período de práctica"
+              startValue={form.startDate}
+              endValue={form.endDate}
+              onChange={(startDate, endDate) => setForm((current) => ({ ...current, startDate, endDate }))}
+              hint="Seleccione la fecha inicial y final en un mismo calendario."
             />
           </WizardStep>
         )}

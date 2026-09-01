@@ -28,6 +28,9 @@ public static class Permissions
     public const string ReportsSend = "reports.send";
     public const string AuditRead = "audit.read";
     public const string RetentionPreview = "retention.preview";
+    public const string RecordsDelete = "records.delete";
+    public const string DeletedRecordsRead = "records.deleted.read";
+    public const string RecordsRestore = "records.restore";
 
     public static IReadOnlyList<PermissionDefinition> All { get; } =
     [
@@ -56,7 +59,10 @@ public static class Permissions
         new(ReportsGenerate, "Reportes", "Generar y revisar reportes"),
         new(ReportsSend, "Reportes", "Enviar reportes por correo"),
         new(AuditRead, "Auditoría", "Consultar trazabilidad global"),
-        new(RetentionPreview, "Retención", "Consultar candidatos y vista previa")
+        new(RetentionPreview, "Retención", "Consultar candidatos y vista previa"),
+        new(RecordsDelete, "Administración", "Enviar clientes, alumnos y expedientes a eliminados"),
+        new(DeletedRecordsRead, "Administración", "Consultar registros eliminados"),
+        new(RecordsRestore, "Administración", "Restaurar registros eliminados")
     ];
 }
 

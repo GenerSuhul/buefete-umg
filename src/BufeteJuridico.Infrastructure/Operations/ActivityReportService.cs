@@ -17,6 +17,9 @@ internal sealed class ActivityReportService(
     TimeProvider timeProvider)
     : IActivityReportService
 {
+    private static readonly TimeZoneInfo ClinicTimeZone =
+        TimeZoneInfo.FindSystemTimeZoneById("America/Guatemala");
+
     public async Task<PagedResult<ActivityDto>> GetActivitiesAsync(
         DateTimeOffset? from,
         DateTimeOffset? to,
@@ -88,19 +91,27 @@ internal sealed class ActivityReportService(
         if (await dbContext.WeeklyReports.AnyAsync(item => item.PeriodStart == start && item.PeriodEnd == end, cancellationToken))
             throw new ConflictException("Ya existe un reporte para el período indicado.");
 
-        var from = new DateTimeOffset(start.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
-        var until = new DateTimeOffset(end.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        var from = ToUtcBoundary(start);
+        var until = ToUtcBoundary(end.AddDays(1));
         var activities = await dbContext.SecretariatActivities.AsNoTracking()
             .Where(item => item.OccurredAtUtc >= from && item.OccurredAtUtc < until)
             .OrderBy(item => item.OccurredAtUtc)
             .ToListAsync(cancellationToken);
+        var responsibleIds = activities
+            .Where(item => item.CreatedByUserId.HasValue)
+            .Select(item => item.CreatedByUserId!.Value)
+            .Distinct()
+            .ToList();
+        var responsibleNames = await dbContext.Users.AsNoTracking()
+            .Where(item => responsibleIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, item => item.FullName, cancellationToken);
 
         var report = new WeeklyReport
         {
             PeriodStart = start,
             PeriodEnd = end,
             Status = WeeklyReportStatus.Draft,
-            PrintableHtml = BuildReportHtml(start, end, activities)
+            PrintableHtml = BuildReportHtml(start, end, activities, responsibleNames)
         };
         foreach (var activity in activities)
             report.Activities.Add(new ReportActivity { SecretariatActivityId = activity.Id });
@@ -113,16 +124,25 @@ internal sealed class ActivityReportService(
     public async Task<WeeklyReportDto> GetReportAsync(Guid id, CancellationToken cancellationToken) =>
         Map(await LoadReportAsync(id, cancellationToken));
 
-    public async Task<IReadOnlyList<WeeklyReportDto>> GetReportsAsync(CancellationToken cancellationToken) =>
-        (await dbContext.WeeklyReports.AsNoTracking()
+    public async Task<PagedResult<WeeklyReportDto>> GetReportsAsync(
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var query = dbContext.WeeklyReports.AsNoTracking();
+        var total = await query.CountAsync(cancellationToken);
+        var reports = await query
             .Include(item => item.Activities)
             .Include(item => item.Deliveries)
             .OrderByDescending(item => item.PeriodStart)
             .ThenByDescending(item => item.CreatedAtUtc)
-            .Take(100)
-            .ToListAsync(cancellationToken))
-        .Select(Map)
-        .ToList();
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+        return new PagedResult<WeeklyReportDto>(reports.Select(Map).ToList(), page, pageSize, total);
+    }
 
     public async Task<WeeklyReportDto> ReviewReportAsync(Guid id, CancellationToken cancellationToken)
     {
@@ -210,7 +230,17 @@ internal sealed class ActivityReportService(
         }
     }
 
-    private static string BuildReportHtml(DateOnly start, DateOnly end, IReadOnlyList<SecretariatActivity> activities)
+    private static DateTimeOffset ToUtcBoundary(DateOnly date)
+    {
+        var local = DateTime.SpecifyKind(date.ToDateTime(TimeOnly.MinValue), DateTimeKind.Unspecified);
+        return TimeZoneInfo.ConvertTimeToUtc(local, ClinicTimeZone);
+    }
+
+    private static string BuildReportHtml(
+        DateOnly start,
+        DateOnly end,
+        IReadOnlyList<SecretariatActivity> activities,
+        IReadOnlyDictionary<Guid, string> responsibleNames)
     {
         var html = new StringBuilder()
             .Append("<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\"><title>Reporte semanal</title>")
@@ -220,10 +250,14 @@ internal sealed class ActivityReportService(
             .Append("</p><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Descripción</th><th>Responsable</th></tr></thead><tbody>");
         foreach (var activity in activities)
         {
-            html.Append("<tr><td>").Append(activity.OccurredAtUtc.ToString("yyyy-MM-dd HH:mm"))
+            var occurredAtLocal = TimeZoneInfo.ConvertTime(activity.OccurredAtUtc, ClinicTimeZone);
+            var responsible = activity.CreatedByUserId is { } userId
+                ? responsibleNames.GetValueOrDefault(userId, "Usuario no disponible")
+                : "Sistema";
+            html.Append("<tr><td>").Append(occurredAtLocal.ToString("yyyy-MM-dd HH:mm"))
                 .Append("</td><td>").Append(WebUtility.HtmlEncode(activity.ActivityType))
                 .Append("</td><td>").Append(WebUtility.HtmlEncode(activity.Description))
-                .Append("</td><td>").Append(WebUtility.HtmlEncode(activity.CreatedByUserId?.ToString() ?? "Sistema"))
+                .Append("</td><td>").Append(WebUtility.HtmlEncode(responsible))
                 .Append("</td></tr>");
         }
         return html.Append("</tbody></table></body></html>").ToString();

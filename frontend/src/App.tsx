@@ -52,6 +52,9 @@ const DocumentsPage = lazy(() =>
     default: module.DocumentsPage,
   })),
 );
+const DeletedRecordsPage = lazy(() =>
+  import("./pages/DeletedRecordsPage").then((module) => ({ default: module.DeletedRecordsPage })),
+);
 const ReportsPage = lazy(() =>
   import("./pages/ReportsPage").then((module) => ({
     default: module.ReportsPage,
@@ -180,6 +183,10 @@ export default function App() {
                   <ReportsPage />
                 </Allowed>
               }
+            />
+            <Route
+              path="eliminados"
+              element={<Allowed any={["records.deleted.read"]}><DeletedRecordsPage /></Allowed>}
             />
             <Route
               path="usuarios"

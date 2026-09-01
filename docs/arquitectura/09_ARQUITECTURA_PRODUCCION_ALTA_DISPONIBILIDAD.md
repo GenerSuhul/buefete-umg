@@ -28,6 +28,10 @@ privado permiten distribuir solicitudes entre instancias.
 - Usar PostgreSQL administrado o un clúster con failover probado.
 - Mantener pool de conexiones acotado por réplica de API; la suma de todos los
   pools debe quedar por debajo del límite del servidor.
+- La configuración inicial limita cada réplica a 30 conexiones y mantiene dos
+  conexiones calientes. Antes de escalar, calcular el límite como
+  `réplicas × pool máximo + margen operativo < max_connections`; no copiar el
+  valor local sin contrastarlo con el servicio PostgreSQL definitivo.
 - Ejecutar migraciones una sola vez como etapa previa al despliegue mediante
   `dotnet run --no-launch-profile --project src/BufeteJuridico.Api -- --migrate`.
 - Desplegar primero migraciones compatibles hacia atrás y luego las réplicas.
@@ -50,6 +54,10 @@ privado permiten distribuir solicitudes entre instancias.
 - Dos o más réplicas de API con health checks `/health/live` y `/health/ready`.
 - Terminación TLS, límites de tamaño y frecuencia, timeouts y encabezados en el
   proxy. Solo proxies explícitos pueden aportar encabezados reenviados.
+- Configurar `AllowedHosts` con los dominios públicos exactos y
+  `ReverseProxy__KnownProxies` con las direcciones del balanceador. La API
+  rechaza el arranque productivo con comodín, proxy indefinido o almacenamiento
+  local para evitar una degradación silenciosa de seguridad y disponibilidad.
 - Secretos gestionados fuera de imágenes, repositorio y archivos distribuidos.
 - Despliegue gradual con rollback; no migrar automáticamente al arrancar cada
   réplica.

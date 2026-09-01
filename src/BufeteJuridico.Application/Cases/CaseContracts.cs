@@ -16,14 +16,17 @@ public sealed record CaseSummaryDto(
     DateTimeOffset OpenedAtUtc,
     DateTimeOffset? ClosedAtUtc,
     TimelineEntryDto? LastStep,
-    IReadOnlyList<CaseAssignmentDto> Assignments);
+    IReadOnlyList<CaseAssignmentDto> Assignments,
+    Guid ConcurrencyToken);
 
 public sealed record CaseDetailDto(
     CaseSummaryDto Summary,
     IReadOnlyList<CaseRequirementDto> Requirements,
     IReadOnlyList<CounterpartyDto> Counterparties,
     IReadOnlyList<TimelineEntryDto> Timeline,
-    IReadOnlyList<MemorialDto> Memorials);
+    IReadOnlyList<MemorialDto> Memorials,
+    IReadOnlyList<CasePresentationDto> Presentations,
+    IReadOnlyList<CourtNotificationDto> CourtNotifications);
 
 public sealed record CaseRequirementDto(
     Guid Id,
@@ -47,7 +50,8 @@ public sealed record CaseAssignmentDto(
     bool IsPrimary,
     CaseAssignmentStatus Status,
     DateTimeOffset AssignedAtUtc,
-    DateTimeOffset? EndedAtUtc);
+    DateTimeOffset? EndedAtUtc,
+    string? EndReason);
 
 public sealed record CounterpartyDto(
     Guid Id,
@@ -90,11 +94,35 @@ public sealed record MemorialReviewDto(
     DateTimeOffset ReviewedAtUtc,
     Guid? ReviewedByUserId);
 
+public sealed record CasePresentationDto(
+    Guid Id,
+    Guid MemorialId,
+    string MemorialTitle,
+    Guid MemorialVersionId,
+    DateTimeOffset PresentedAtUtc,
+    string Result,
+    Guid? PresentedDocumentId,
+    Guid? ReceiptDocumentId,
+    Guid? CreatedByUserId);
+
+public sealed record CourtNotificationDto(
+    Guid Id,
+    DateTimeOffset NotifiedAtUtc,
+    string Description,
+    Guid DocumentId,
+    string? NewStage,
+    Guid? CreatedByUserId);
+
 public sealed record OpenCaseRequest(
     Guid ClientId,
     Guid ProcessTypeId,
     string? InitialStage,
     IReadOnlyList<SaveCounterpartyRequest>? Counterparties);
+
+public sealed record UpdateCaseRequest(
+    LegalCaseStatus Status,
+    string Stage,
+    Guid ConcurrencyToken);
 
 public sealed record SaveCounterpartyRequest(
     string FullName,
@@ -164,6 +192,8 @@ public interface ICaseService
     Task<CaseDetailDto> GetCaseAsync(Guid id, CancellationToken cancellationToken);
 
     Task<CaseDetailDto> OpenCaseAsync(OpenCaseRequest request, CancellationToken cancellationToken);
+
+    Task<CaseDetailDto> UpdateCaseAsync(Guid id, UpdateCaseRequest request, CancellationToken cancellationToken);
 
     Task<CaseRequirementDto> UpdateRequirementAsync(Guid caseId, Guid requirementId, UpdateCaseRequirementRequest request, CancellationToken cancellationToken);
 

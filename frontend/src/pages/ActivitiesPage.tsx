@@ -1,16 +1,18 @@
 import { CalendarDays, ClipboardList, Plus } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { Pagination, RelationLookup } from "../components/domain/Shared";
 import {
   Badge,
   Button,
   Card,
-  DatePickerField,
+  AppDatePicker,
   ErrorState,
   Field,
   LoadingState,
   Modal,
   PageHeader,
   SectionHeading,
+  Select,
 } from "../components/ui";
 import { dataSource } from "../data/dataSource";
 import { useAsyncData } from "../hooks/useAsyncData";
@@ -24,6 +26,7 @@ const nowLocal = () => {
 
 export function ActivitiesPage() {
   const [open, setOpen] = useState(false);
+  const [page, setPage] = useState(1);
   const [form, setForm] = useState({
     activityType: "Atención a cliente",
     occurredAt: nowLocal(),
@@ -35,21 +38,12 @@ export function ActivitiesPage() {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const { data, error, loading, reload } = useAsyncData(
-    () => dataSource.listActivities({ pageSize: 100 }),
-    [],
+    () => dataSource.listActivities({ page, pageSize: 25 }),
+    [page],
   );
-  const options = useAsyncData(async () => {
-    const [clients, students, cases] = await Promise.all([
-      dataSource.listClients({ pageSize: 100 }),
-      dataSource.listStudents({ pageSize: 100 }),
-      dataSource.listCases({ pageSize: 100 }),
-    ]);
-    return {
-      clients: clients.items,
-      students: students.items,
-      cases: cases.items,
-    };
-  }, []);
+  const loadClients = useCallback(async (term: string) => (await dataSource.listClients({ search: term, pageSize: 20 })).items.map((item) => ({ value: item.id, label: `${item.fullName} · ${item.receptionNumber}` })), []);
+  const loadStudents = useCallback(async (term: string) => (await dataSource.listStudents({ search: term, pageSize: 20 })).items.map((item) => ({ value: item.id, label: `${item.fullName} · ${item.studentCardNumber}` })), []);
+  const loadCases = useCallback(async (term: string) => (await dataSource.listCases({ search: term, pageSize: 20 })).items.map((item) => ({ value: item.id, label: `${item.caseNumber} · ${item.clientName}` })), []);
 
   const save = async () => {
     setBusy(true);
@@ -119,9 +113,10 @@ export function ActivitiesPage() {
           ) : error ? (
             <ErrorState error={error} retry={reload} />
           ) : (
-            <div className="activity-feed">
-              {data?.items.map((activity) => (
-                <article key={activity.id}>
+            <>
+              <div className="activity-feed">
+                {data?.items.map((activity) => (
+                  <article key={activity.id}>
                   <span className="activity-feed__icon">
                     <ClipboardList size={20} />
                   </span>
@@ -135,9 +130,11 @@ export function ActivitiesPage() {
                     <p>{activity.description}</p>
                     <small>{formatDateTime(activity.occurredAtUtc)}</small>
                   </div>
-                </article>
-              ))}
-            </div>
+                  </article>
+                ))}
+              </div>
+              {data ? <Pagination page={data.page} totalPages={data.totalPages} totalCount={data.totalCount} onPageChange={setPage} /> : null}
+            </>
           )}
         </Card>
         <Card>
@@ -176,7 +173,7 @@ export function ActivitiesPage() {
         )}
         <div className="form-grid">
           <Field label="Tipo de actividad">
-            <select
+            <Select
               value={form.activityType}
               onChange={(event) =>
                 setForm({ ...form, activityType: event.target.value })
@@ -188,60 +185,19 @@ export function ActivitiesPage() {
               <option>Revisión de memorial</option>
               <option>Notificación judicial</option>
               <option>Otra actividad</option>
-            </select>
+            </Select>
           </Field>
-          <DatePickerField
+          <AppDatePicker
             label="Fecha y hora"
+            preset="processDate"
             value={form.occurredAt}
             onChange={(occurredAt) => setForm({ ...form, occurredAt })}
             withTime
             required
           />
-          <Field label="Cliente (opcional)">
-            <select
-              value={form.clientId}
-              onChange={(event) =>
-                setForm({ ...form, clientId: event.target.value })
-              }
-            >
-              <option value="">Sin cliente</option>
-              {options.data?.clients.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.fullName}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Alumno (opcional)">
-            <select
-              value={form.studentId}
-              onChange={(event) =>
-                setForm({ ...form, studentId: event.target.value })
-              }
-            >
-              <option value="">Sin alumno</option>
-              {options.data?.students.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.fullName}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Expediente (opcional)">
-            <select
-              value={form.legalCaseId}
-              onChange={(event) =>
-                setForm({ ...form, legalCaseId: event.target.value })
-              }
-            >
-              <option value="">Sin expediente</option>
-              {options.data?.cases.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.caseNumber} · {item.clientName}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <RelationLookup label="Cliente (opcional)" value={form.clientId} onChange={(clientId) => setForm({ ...form, clientId })} load={loadClients} emptyLabel="Sin cliente" />
+          <RelationLookup label="Alumno (opcional)" value={form.studentId} onChange={(studentId) => setForm({ ...form, studentId })} load={loadStudents} emptyLabel="Sin alumno" />
+          <RelationLookup label="Expediente (opcional)" value={form.legalCaseId} onChange={(legalCaseId) => setForm({ ...form, legalCaseId })} load={loadCases} emptyLabel="Sin expediente" />
           <Field label="Descripción">
             <textarea
               value={form.description}

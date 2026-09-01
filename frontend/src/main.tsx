@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import '@fontsource-variable/manrope';
 import '@daypicker/react/style.css';
 import App from './App';
+import { FeedbackProvider } from './components/ui/Feedback';
 import { AuthProvider } from './context/AuthContext';
 import './styles/global.css';
 import './styles/dashboard.css';
@@ -17,9 +18,11 @@ import './styles/login.css';
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
+      <FeedbackProvider>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </FeedbackProvider>
     </BrowserRouter>
   </StrictMode>,
 );

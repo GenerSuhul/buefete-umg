@@ -15,7 +15,7 @@ import {
   Badge,
   Button,
   Card,
-  DatePickerField,
+  AppDatePicker,
   ErrorState,
   Field,
   FilePicker,
@@ -25,12 +25,22 @@ import {
   ReadOnlyValue,
   WizardProgress,
   WizardStep,
+  Select,
 } from "../components/ui";
 import { dataSource } from "../data/dataSource";
+import { feedbackHandled } from "../components/ui/feedback/operationFeedback";
+import { useNotify } from "../components/ui/Feedback";
 import { useAsyncData } from "../hooks/useAsyncData";
 import { formatDate } from "../utils/format";
+import { toLocalDateOnly } from "../utils/date";
+import {
+  formatCui,
+  formatGuatemalaPhone,
+  isCompleteCui,
+  isCompleteGuatemalaPhone,
+} from "../utils/inputMasks";
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => toLocalDateOnly();
 
 const emptyForm = {
   fullName: "",
@@ -95,8 +105,10 @@ function calculateAge(birthDate: string, receptionDate: string) {
 }
 
 export function ClientsPage() {
+  const notify = useNotify();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [newOpen, setNewOpen] = useState(false);
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<ClientForm>(emptyForm);
@@ -107,10 +119,10 @@ export function ClientsPage() {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const loader = useMemo(
-    () => () => dataSource.listClients({ search, pageSize: 20 }),
-    [search],
+    () => () => dataSource.listClients({ search, page, pageSize: 20 }),
+    [search, page],
   );
-  const { data, error, loading, reload } = useAsyncData(loader, [search]);
+  const { data, error, loading, reload } = useAsyncData(loader, [search, page]);
   const processTypes = useAsyncData(() => dataSource.listProcessTypes(), []);
   const ageAtReception = calculateAge(form.birthDate, form.receptionDate);
 
@@ -129,12 +141,21 @@ export function ClientsPage() {
   const validateStep = (target = step) => {
     if (target === 0 && (!form.fullName.trim() || !form.dpi.trim()))
       return "Nombre completo y DPI son obligatorios.";
+    if (target === 0 && !isCompleteCui(form.dpi))
+      return "El DPI debe contener los 13 dígitos del CUI.";
     if (target === 0 && form.birthDate && ageAtReception === null)
       return "La fecha de nacimiento no puede ser posterior a la recepción.";
     if (target === 1 && !form.residenceAddress.trim())
       return "La dirección de residencia es obligatoria.";
     if (target === 1 && Number(form.childrenCount) < 0)
       return "La cantidad de hijos no puede ser negativa.";
+    if (
+      target === 1 &&
+      [form.phone, form.mobilePhone, form.workPhone].some(
+        (value) => !isCompleteGuatemalaPhone(value),
+      )
+    )
+      return "Los teléfonos deben contener 8 dígitos o el prefijo +502 seguido de 8 dígitos.";
     if (
       target === 2 &&
       (!form.assistanceRequested ||
@@ -196,51 +217,58 @@ export function ClientsPage() {
     setBusy(true);
     setFormError(null);
     try {
-      let created = await dataSource.createClient(request());
-      if (files.dpi)
-        await dataSource.uploadDocument({
-          file: files.dpi,
-          contextType: "Client",
-          contextId: created.id,
-          label: "DPI",
-        });
-      let signatureDocumentId: string | null = null;
-      if (files.signature)
-        signatureDocumentId = (
-          await dataSource.uploadDocument({
-            file: files.signature,
+      const created = await notify.track((async () => {
+        let client = await dataSource.createClient(feedbackHandled(request()));
+        if (files.dpi)
+          await dataSource.uploadDocument(feedbackHandled({
+            file: files.dpi,
             contextType: "Client",
-            contextId: created.id,
-            label: "Firma o impresión digital",
-          })
-        ).id;
-      if (signatureDocumentId)
-        created = await dataSource.updateClient(
-          created.id,
-          request(signatureDocumentId),
-        );
-      if (form.createIncomeDeclaration) {
-        await dataSource.createIncomeDeclaration(created.id, {
-          fullName: created.fullName,
-          declaredAge: created.ageAtReception,
-          maritalStatus: created.maritalStatus,
-          sex: created.sex,
-          dpi: created.dpi,
-          occupation: created.occupation,
-          nationality: created.nationality,
-          residenceAddress: created.residenceAddress,
-          phone: created.phone,
-          mobilePhone: created.mobilePhone,
-          workplace: created.workplace,
-          workAddress: created.workAddress,
-          salaryAmount: created.salaryAmount,
-          salaryFrequency: created.salaryFrequency,
-          place: created.receptionPlace,
-          declarationDate: created.receptionDate,
-          declaresLimitedResources: true,
-          signedDocumentId: signatureDocumentId,
-        });
-      }
+            contextId: client.id,
+            label: "DPI",
+          }));
+        let signatureDocumentId: string | null = null;
+        if (files.signature)
+          signatureDocumentId = (
+            await dataSource.uploadDocument(feedbackHandled({
+              file: files.signature,
+              contextType: "Client",
+              contextId: client.id,
+              label: "Firma o impresión digital",
+            }))
+          ).id;
+        if (signatureDocumentId)
+          client = await dataSource.updateClient(
+            client.id,
+            feedbackHandled({ ...request(signatureDocumentId), concurrencyToken: client.concurrencyToken }),
+          );
+        if (form.createIncomeDeclaration) {
+          await dataSource.createIncomeDeclaration(client.id, feedbackHandled({
+            fullName: client.fullName,
+            declaredAge: client.ageAtReception,
+            maritalStatus: client.maritalStatus,
+            sex: client.sex,
+            dpi: client.dpi,
+            occupation: client.occupation,
+            nationality: client.nationality,
+            residenceAddress: client.residenceAddress,
+            phone: client.phone,
+            mobilePhone: client.mobilePhone,
+            workplace: client.workplace,
+            workAddress: client.workAddress,
+            salaryAmount: client.salaryAmount,
+            salaryFrequency: client.salaryFrequency,
+            place: client.receptionPlace,
+            declarationDate: client.receptionDate,
+            declaresLimitedResources: true,
+            signedDocumentId: signatureDocumentId,
+          }));
+        }
+        return client;
+      })(), {
+        loading: { title: "Registrando cliente…", message: "Se está preparando la ficha de recepción." },
+        success: (client) => ({ title: "Cliente registrado", message: `${client.fullName} fue agregado correctamente.` }),
+        error: { title: "No se pudo registrar el cliente" },
+      });
       setNewOpen(false);
       await reload();
       navigate(`/personas/clientes/${created.id}`);
@@ -309,7 +337,7 @@ export function ClientsPage() {
       <Card className="directory-card">
         <FilterBar
           value={search}
-          onChange={setSearch}
+          onChange={(value) => { setSearch(value); setPage(1); }}
           placeholder="Buscar por nombre, DPI o recepción…"
         />
         {loading ? (
@@ -363,6 +391,7 @@ export function ClientsPage() {
                 page={data.page}
                 totalPages={data.totalPages}
                 totalCount={data.totalCount}
+                onPageChange={setPage}
               />
             )}
           </>
@@ -405,14 +434,17 @@ export function ClientsPage() {
               <input
                 inputMode="numeric"
                 value={form.dpi}
-                onChange={(event) => update("dpi", event.target.value)}
+                maxLength={15}
+                onChange={(event) => update("dpi", formatCui(event.target.value))}
                 placeholder="0000 00000 0000"
               />
             </Field>
-            <DatePickerField
+            <AppDatePicker
               label="Fecha de nacimiento"
+              preset="birthDate"
               value={form.birthDate}
               onChange={(value) => update("birthDate", value)}
+              max={form.receptionDate}
               hint="La edad se calcula con la fecha de recepción."
             />
             <ReadOnlyValue
@@ -436,7 +468,7 @@ export function ClientsPage() {
               />
             </Field>
             <Field label="Sexo">
-              <select
+              <Select
                 value={form.sex}
                 onChange={(event) => update("sex", event.target.value)}
               >
@@ -445,10 +477,10 @@ export function ClientsPage() {
                 <option>Masculino</option>
                 <option>Otro</option>
                 <option>Prefiere no indicar</option>
-              </select>
+              </Select>
             </Field>
             <Field label="Estado civil">
-              <select
+              <Select
                 value={form.maritalStatus}
                 onChange={(event) =>
                   update("maritalStatus", event.target.value)
@@ -460,10 +492,10 @@ export function ClientsPage() {
                 <option>Unido(a)</option>
                 <option>Divorciado(a)</option>
                 <option>Viudo(a)</option>
-              </select>
+              </Select>
             </Field>
             <Field label="Escolaridad">
-              <select
+              <Select
                 value={form.education}
                 onChange={(event) => update("education", event.target.value)}
               >
@@ -473,7 +505,7 @@ export function ClientsPage() {
                 <option>Básicos</option>
                 <option>Diversificado</option>
                 <option>Universitaria</option>
-              </select>
+              </Select>
             </Field>
           </WizardStep>
         )}
@@ -493,15 +525,19 @@ export function ClientsPage() {
             <Field label="Teléfono">
               <input
                 type="tel"
+                inputMode="tel"
+                placeholder="0000 0000"
                 value={form.phone}
-                onChange={(event) => update("phone", event.target.value)}
+                onChange={(event) => update("phone", formatGuatemalaPhone(event.target.value))}
               />
             </Field>
             <Field label="Celular">
               <input
                 type="tel"
+                inputMode="tel"
+                placeholder="0000 0000"
                 value={form.mobilePhone}
-                onChange={(event) => update("mobilePhone", event.target.value)}
+                onChange={(event) => update("mobilePhone", formatGuatemalaPhone(event.target.value))}
               />
             </Field>
             <Field label="Profesión u oficio">
@@ -525,8 +561,10 @@ export function ClientsPage() {
             <Field label="Teléfono de trabajo">
               <input
                 type="tel"
+                inputMode="tel"
+                placeholder="0000 0000"
                 value={form.workPhone}
-                onChange={(event) => update("workPhone", event.target.value)}
+                onChange={(event) => update("workPhone", formatGuatemalaPhone(event.target.value))}
               />
             </Field>
             <Field label="Ingresos declarados">
@@ -540,7 +578,7 @@ export function ClientsPage() {
               />
             </Field>
             <Field label="Frecuencia del ingreso">
-              <select
+              <Select
                 value={form.salaryFrequency}
                 onChange={(event) =>
                   update("salaryFrequency", event.target.value)
@@ -550,7 +588,7 @@ export function ClientsPage() {
                 <option>Quincenal</option>
                 <option>Semanal</option>
                 <option>Diario</option>
-              </select>
+              </Select>
             </Field>
             <Field label="Cantidad de hijos">
               <input
@@ -570,7 +608,7 @@ export function ClientsPage() {
             description="Seleccione la asistencia solicitada y complete los datos de la contraparte, si corresponde."
           >
             <Field label="Asistencia solicitada" wide>
-              <select
+              <Select
                 value={form.assistanceRequested}
                 onChange={(event) =>
                   update("assistanceRequested", event.target.value)
@@ -584,7 +622,7 @@ export function ClientsPage() {
                       {item.name}
                     </option>
                   ))}
-              </select>
+              </Select>
             </Field>
             {selectedProcess?.description && (
               <p className="wizard-inline-note">
@@ -616,8 +654,9 @@ export function ClientsPage() {
                 }
               />
             </Field>
-            <DatePickerField
+            <AppDatePicker
               label="Fecha de recepción"
+              preset="processDate"
               value={form.receptionDate}
               onChange={(value) => update("receptionDate", value)}
               required

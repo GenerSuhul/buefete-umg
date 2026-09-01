@@ -35,9 +35,9 @@ internal sealed class DocumentService(
         if (request.ReplaceDocumentId is not null)
         {
             previous = await dbContext.Documents.SingleOrDefaultAsync(
-                item => item.Id == request.ReplaceDocumentId && item.DeletedAtUtc == null,
+                item => item.Id == request.ReplaceDocumentId && item.IsCurrent && item.DeletedAtUtc == null,
                 cancellationToken)
-                ?? throw new NotFoundException("No se encontró el documento que se reemplazará.");
+                ?? throw new ConflictException("El documento que se reemplazará no existe o ya no es la versión vigente.");
 
             if (previous.ContextType != request.ContextType ||
                 previous.ContextId != request.ContextId ||
@@ -51,25 +51,34 @@ internal sealed class DocumentService(
         }
 
         var stored = await fileStorage.StoreAsync(extension, request.ContentType, request.Content, cancellationToken);
-        var document = new DocumentRecord
+        try
         {
-            StorageKey = stored.StorageKey,
-            OriginalFileName = Path.GetFileName(request.OriginalFileName),
-            ContentType = request.ContentType.ToLowerInvariant(),
-            SizeBytes = stored.SizeBytes,
-            Sha256 = stored.Sha256,
-            Source = request.Source,
-            ContextType = request.ContextType,
-            ContextId = request.ContextId,
-            Label = request.Label.Trim(),
-            VersionNumber = versionNumber,
-            PreviousVersionId = previous?.Id,
-            IsCurrent = true
-        };
+            var document = new DocumentRecord
+            {
+                StorageKey = stored.StorageKey,
+                OriginalFileName = Path.GetFileName(request.OriginalFileName),
+                ContentType = request.ContentType.ToLowerInvariant(),
+                SizeBytes = stored.SizeBytes,
+                Sha256 = stored.Sha256,
+                Source = request.Source,
+                ContextType = request.ContextType,
+                ContextId = request.ContextId,
+                Label = request.Label.Trim(),
+                VersionNumber = versionNumber,
+                PreviousVersionId = previous?.Id,
+                IsCurrent = true
+            };
 
-        dbContext.Documents.Add(document);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        return Map(document);
+            dbContext.Documents.Add(document);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return Map(document);
+        }
+        catch
+        {
+            // El objeto no debe sobrevivir si PostgreSQL rechaza sus metadatos.
+            await fileStorage.DeleteAsync(stored.StorageKey, CancellationToken.None);
+            throw;
+        }
     }
 
     public async Task<DocumentDto> GetMetadataAsync(Guid id, CancellationToken cancellationToken)
@@ -82,6 +91,7 @@ internal sealed class DocumentService(
     public async Task<PagedResult<DocumentDto>> GetForContextAsync(
         DocumentContextType contextType,
         Guid contextId,
+        string? label,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
@@ -91,6 +101,14 @@ internal sealed class DocumentService(
         pageSize = Math.Clamp(pageSize, 1, 100);
         var query = dbContext.Documents.AsNoTracking().Where(item =>
             item.ContextType == contextType && item.ContextId == contextId && item.DeletedAtUtc == null);
+        if (!string.IsNullOrWhiteSpace(label))
+        {
+            var exactLabel = label.Trim()
+                .Replace("\\", "\\\\", StringComparison.Ordinal)
+                .Replace("%", "\\%", StringComparison.Ordinal)
+                .Replace("_", "\\_", StringComparison.Ordinal);
+            query = query.Where(item => EF.Functions.ILike(item.Label, exactLabel, "\\"));
+        }
         var total = await query.CountAsync(cancellationToken);
         var items = await query
             .OrderBy(item => item.Label)
@@ -209,6 +227,25 @@ internal sealed class DocumentService(
         bool write,
         CancellationToken cancellationToken) =>
         EnsureContextAccessCoreAsync(contextType, contextId, write, cancellationToken);
+
+    public async Task EnsureDocumentMatchesContextAsync(
+        Guid documentId,
+        DocumentContextType contextType,
+        Guid contextId,
+        CancellationToken cancellationToken)
+    {
+        await EnsureContextAccessCoreAsync(contextType, contextId, write: true, cancellationToken);
+        if (!await dbContext.Documents.AsNoTracking().AnyAsync(item =>
+                item.Id == documentId &&
+                item.ContextType == contextType &&
+                item.ContextId == contextId &&
+                item.IsCurrent &&
+                item.DeletedAtUtc == null,
+                cancellationToken))
+        {
+            throw new ValidationException("El documento no pertenece al registro indicado o no es su versión vigente.");
+        }
+    }
 
     private async Task EnsureContextAccessCoreAsync(
         DocumentContextType contextType,

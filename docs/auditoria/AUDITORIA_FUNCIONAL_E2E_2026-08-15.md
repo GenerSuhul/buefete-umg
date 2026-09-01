@@ -1,5 +1,7 @@
 # Auditoría funcional y E2E — 15 de agosto de 2026
 
+> **Corte histórico.** Para el estado vigente consulte [`README.md`](README.md) y [`MATRIZ_TRAZABILIDAD_E2E_2026-08-28.md`](MATRIZ_TRAZABILIDAD_E2E_2026-08-28.md).
+
 ## Dictamen
 
 El sistema tenía desviaciones críticas en inscripción de alumnos, identidad de

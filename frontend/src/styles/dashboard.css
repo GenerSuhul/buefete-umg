@@ -30,7 +30,7 @@
 .bar-chart__value { position: relative; z-index: 2; font-size: 10px; line-height: 20px; font-weight: 800; color: var(--umg-700); opacity: .78; transition: var(--transition); }
 .bar-chart__item:hover .bar-chart__value, .bar-chart__item.is-current .bar-chart__value { opacity: 1; }
 .bar-chart__item small { color: var(--ink-500); font-size: 9px; }
-.trend-card { grid-column: 3; grid-row: 1; padding: 20px 0 0; display: flex; flex-direction: column; }
+.trend-card { grid-column: 3; grid-row: 2 / 4; padding: 20px 0 0; display: flex; flex-direction: column; }
 .trend-card .section-heading { padding: 0 20px; }
 .trend-stat { text-align: center; position: relative; z-index: 1; display: grid; grid-template-columns: 1fr auto 1fr; align-items: end; column-gap: 6px; }
 .trend-stat > span:first-child { display: block; grid-column: 1 / -1; font-size: 9px; color: var(--ink-500); }
@@ -61,7 +61,7 @@
 .case-cell small, .last-step small { font-size: 8px; color: var(--ink-500); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-icon { width: 36px; height: 36px; border-radius: 50%; background: #fff; color: var(--umg-700); display: grid; place-items: center; flex: none; }
 .person-cell > span:last-child { font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.students-card { grid-column: 3; grid-row: 2 / 4; padding: 20px; }
+.students-card { grid-column: 3; grid-row: 1; padding: 20px; }
 .student-highlight { background: var(--surface-soft); border-radius: var(--radius-md); min-height: 172px; padding: 22px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .student-highlight__avatars { display: flex; justify-content: center; margin-bottom: 14px; }
 .student-highlight__avatars .avatar { margin-left: -13px; }
@@ -86,6 +86,12 @@
 @media (max-width: 1180px) {
   .dashboard-grid { grid-template-columns: 1fr 1fr; grid-template-rows: auto; }
   .dashboard-primary, .chart-card, .trend-card, .kpi-card, .recent-cases, .students-card { grid-column: auto; grid-row: auto; }
+  .dashboard-primary { order: 1; }
+  .chart-card { order: 2; }
+  .students-card { order: 3; }
+  .kpi-card { order: 4; }
+  .recent-cases { order: 5; }
+  .trend-card { order: 6; }
   .chart-card { grid-column: 1 / -1; }
   .recent-cases { grid-column: 1 / -1; }
 }

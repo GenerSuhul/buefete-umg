@@ -2,6 +2,7 @@ using BufeteJuridico.Application.Authorization;
 using BufeteJuridico.Application.Cases;
 using BufeteJuridico.Application.Common;
 using BufeteJuridico.Domain.Cases;
+using BufeteJuridico.Domain.Documents;
 using BufeteJuridico.Domain.Students;
 using BufeteJuridico.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -65,7 +66,7 @@ internal sealed class CaseService(
         await EnsureCanReadCaseAsync(id, cancellationToken);
         var legalCase = await LoadCaseAsync(id, cancellationToken);
         var photos = await GetStudentPhotoMapAsync(legalCase.Assignments.Select(item => item.Student), cancellationToken);
-        return MapDetail(legalCase, photos);
+        return await MapDetailAsync(legalCase, photos, cancellationToken);
     }
 
     public async Task<CaseDetailDto> OpenCaseAsync(OpenCaseRequest request, CancellationToken cancellationToken)
@@ -105,16 +106,15 @@ internal sealed class CaseService(
 
         foreach (var counterparty in request.Counterparties ?? [])
         {
-            if (string.IsNullOrWhiteSpace(counterparty.FullName))
-                throw new ValidationException("El nombre de la contraparte es obligatorio.");
+            ValidateCounterparty(counterparty);
 
             legalCase.Counterparties.Add(new Counterparty
             {
                 FullName = counterparty.FullName.Trim(),
-                Dpi = Clean(counterparty.Dpi),
+                Dpi = ContactNormalization.Cui(counterparty.Dpi),
                 ResidenceAddress = Clean(counterparty.ResidenceAddress),
                 WorkAddress = Clean(counterparty.WorkAddress),
-                Phone = Clean(counterparty.Phone),
+                Phone = ContactNormalization.GuatemalaPhone(counterparty.Phone),
                 Notes = Clean(counterparty.Notes)
             });
         }
@@ -129,7 +129,45 @@ internal sealed class CaseService(
 
         dbContext.LegalCases.Add(legalCase);
         await dbContext.SaveChangesAsync(cancellationToken);
-        return MapDetail(await LoadCaseAsync(legalCase.Id, cancellationToken));
+        return await MapDetailAsync(await LoadCaseAsync(legalCase.Id, cancellationToken), cancellationToken: cancellationToken);
+    }
+
+    public async Task<CaseDetailDto> UpdateCaseAsync(
+        Guid id,
+        UpdateCaseRequest request,
+        CancellationToken cancellationToken)
+    {
+        EnsureStaffWrite();
+        if (string.IsNullOrWhiteSpace(request.Stage))
+            throw new ValidationException("La etapa procesal es obligatoria.");
+        if (request.Stage.Trim().Length > 160)
+            throw new ValidationException("La etapa procesal no puede exceder 160 caracteres.");
+        if (request.ConcurrencyToken == Guid.Empty)
+            throw new ValidationException("La versión del expediente es obligatoria para guardar cambios.");
+        if (request.Status is LegalCaseStatus.Closed or LegalCaseStatus.Archived)
+            throw new ValidationException("Utilice las acciones de cierre o archivo para ese estado.");
+
+        var legalCase = await dbContext.LegalCases
+            .Include(item => item.Timeline)
+            .SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
+            ?? throw new NotFoundException("No se encontró el expediente.");
+        dbContext.Entry(legalCase).Property(item => item.ConcurrencyToken).OriginalValue = request.ConcurrencyToken;
+        EnsureCaseOpen(legalCase);
+
+        var previousStatus = legalCase.Status;
+        var previousStage = legalCase.Stage;
+        legalCase.Status = request.Status;
+        legalCase.Stage = request.Stage.Trim();
+        AddTimeline(legalCase, new TimelineEntry
+        {
+            Type = TimelineEntryType.StatusChange,
+            OccurredAtUtc = timeProvider.GetUtcNow(),
+            Title = "Datos operativos del expediente actualizados",
+            Description = $"Estado: {previousStatus} → {legalCase.Status}. Etapa: {previousStage} → {legalCase.Stage}."
+        });
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return await MapDetailAsync(await LoadCaseAsync(id, cancellationToken), cancellationToken: cancellationToken);
     }
 
     public async Task<CaseRequirementDto> UpdateRequirementAsync(
@@ -145,6 +183,15 @@ internal sealed class CaseService(
         EnsureCaseOpen(legalCase);
         var requirement = legalCase.Requirements.SingleOrDefault(item => item.Id == requirementId)
             ?? throw new NotFoundException("No se encontró el requisito del expediente.");
+
+        if (request.DocumentId is Guid requirementDocumentId)
+        {
+            await EnsureDocumentMatchesContextAsync(
+                requirementDocumentId,
+                DocumentContextType.CaseRequirement,
+                requirement.Id,
+                cancellationToken);
+        }
 
         requirement.Status = RequirementRules.DetermineStatus(
             request.Status,
@@ -226,7 +273,7 @@ internal sealed class CaseService(
         var photo = student.UserAccountId is Guid userId
             ? await dbContext.Users.Where(user => user.Id == userId).Select(user => user.PhotoDocumentId).SingleOrDefaultAsync(cancellationToken)
             : null;
-        return new CaseAssignmentDto(item.Id, student.Id, student.FullName, photo, item.IsPrimary, item.Status, item.AssignedAtUtc, item.EndedAtUtc);
+        return new CaseAssignmentDto(item.Id, student.Id, student.FullName, photo, item.IsPrimary, item.Status, item.AssignedAtUtc, item.EndedAtUtc, item.EndReason);
     }
 
     public async Task<CounterpartyDto> SaveCounterpartyAsync(
@@ -236,8 +283,7 @@ internal sealed class CaseService(
         CancellationToken cancellationToken)
     {
         EnsureStaffWrite();
-        if (string.IsNullOrWhiteSpace(request.FullName))
-            throw new ValidationException("El nombre de la contraparte es obligatorio.");
+        ValidateCounterparty(request);
         var legalCase = await dbContext.LegalCases.Include(item => item.Counterparties)
             .SingleOrDefaultAsync(item => item.Id == caseId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el expediente.");
@@ -255,10 +301,10 @@ internal sealed class CaseService(
         }
 
         item.FullName = request.FullName.Trim();
-        item.Dpi = Clean(request.Dpi);
+        item.Dpi = ContactNormalization.Cui(request.Dpi);
         item.ResidenceAddress = Clean(request.ResidenceAddress);
         item.WorkAddress = Clean(request.WorkAddress);
-        item.Phone = Clean(request.Phone);
+        item.Phone = ContactNormalization.GuatemalaPhone(request.Phone);
         item.Notes = Clean(request.Notes);
         AddTimeline(legalCase, new TimelineEntry
         {
@@ -307,9 +353,26 @@ internal sealed class CaseService(
     {
         EnsureStaffWrite(Permissions.CaseTimelineWrite);
         if (string.IsNullOrWhiteSpace(request.Title)) throw new ValidationException("El título de la actuación es obligatorio.");
+        if (request.Type != TimelineEntryType.GeneralAction)
+            throw new ValidationException("Las notificaciones, presentaciones, asignaciones y cambios de estado deben registrarse desde su acción específica.");
+        if (!string.IsNullOrWhiteSpace(request.NewStage) || request.NewStatus is not null)
+            throw new ValidationException("Una actuación general no puede modificar el estado ni la etapa del expediente.");
         var legalCase = await dbContext.LegalCases.SingleOrDefaultAsync(item => item.Id == caseId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el expediente.");
         EnsureCaseOpen(legalCase);
+
+        if (request.DocumentId is Guid timelineDocumentId)
+            await EnsureDocumentBelongsToCaseAsync(timelineDocumentId, caseId, cancellationToken);
+
+        if (request.PerformedByStudentId is Guid studentId &&
+            !await dbContext.CaseAssignments.AnyAsync(item =>
+                item.LegalCaseId == caseId &&
+                item.StudentId == studentId &&
+                item.Status == CaseAssignmentStatus.Active,
+                cancellationToken))
+        {
+            throw new ValidationException("El alumno indicado no tiene una asignación activa en el expediente.");
+        }
 
         var item = new TimelineEntry
         {
@@ -322,8 +385,6 @@ internal sealed class CaseService(
             DocumentId = request.DocumentId
         };
         dbContext.TimelineEntries.Add(item);
-        if (!string.IsNullOrWhiteSpace(request.NewStage)) legalCase.Stage = request.NewStage.Trim();
-        if (request.NewStatus is not null) legalCase.Status = request.NewStatus.Value;
         await dbContext.SaveChangesAsync(cancellationToken);
         return Map(item);
     }
@@ -335,7 +396,7 @@ internal sealed class CaseService(
     {
         await EnsureCanWriteMemorialAsync(caseId, request.SubmittedByStudentId, cancellationToken);
         if (string.IsNullOrWhiteSpace(request.Title)) throw new ValidationException("El título del memorial es obligatorio.");
-        await EnsureDocumentExistsAsync(request.DocumentId, cancellationToken);
+        await EnsureDocumentMatchesContextAsync(request.DocumentId, DocumentContextType.LegalCase, caseId, cancellationToken);
         var legalCase = await dbContext.LegalCases.SingleAsync(item => item.Id == caseId, cancellationToken);
         EnsureCaseOpen(legalCase);
 
@@ -372,7 +433,7 @@ internal sealed class CaseService(
         CancellationToken cancellationToken)
     {
         await EnsureCanWriteMemorialAsync(caseId, request.SubmittedByStudentId, cancellationToken);
-        await EnsureDocumentExistsAsync(request.DocumentId, cancellationToken);
+        await EnsureDocumentMatchesContextAsync(request.DocumentId, DocumentContextType.Memorial, memorialId, cancellationToken);
         var memorial = await LoadMemorialAsync(caseId, memorialId, cancellationToken);
         EnsureCaseOpen(memorial.LegalCase);
         var version = new MemorialVersion
@@ -410,6 +471,11 @@ internal sealed class CaseService(
         EnsureCaseOpen(memorial.LegalCase);
         var version = memorial.Versions.SingleOrDefault(item => item.Id == request.VersionId)
             ?? throw new NotFoundException("No se encontró la versión del memorial.");
+        var latestVersion = memorial.Versions.OrderByDescending(item => item.VersionNumber).First();
+        if (version.Id != latestVersion.Id)
+            throw new ConflictException("Solo se puede revisar la versión más reciente del memorial.");
+        if (request.ReviewedDocumentId is Guid reviewedDocumentId)
+            await EnsureDocumentMatchesContextAsync(reviewedDocumentId, DocumentContextType.Memorial, memorialId, cancellationToken);
         var review = new MemorialReview
         {
             MemorialVersion = version,
@@ -446,11 +512,19 @@ internal sealed class CaseService(
         if (memorial.Status != MemorialStatus.ApprovedForSignature)
             throw new ConflictException("El memorial debe estar aprobado para firma antes de presentarse.");
         if (string.IsNullOrWhiteSpace(request.Result)) throw new ValidationException("Debe registrar el resultado de la presentación.");
+        var approvedVersion = memorial.Versions.OrderByDescending(item => item.VersionNumber).First();
+        if (!approvedVersion.Reviews.Any(item => item.Outcome == ReviewOutcome.Approved))
+            throw new ConflictException("La versión más reciente del memorial debe tener una revisión aprobada.");
+        if (request.PresentedDocumentId is Guid presentedDocumentId)
+            await EnsureDocumentMatchesContextAsync(presentedDocumentId, DocumentContextType.Memorial, memorialId, cancellationToken);
+        if (request.ReceiptDocumentId is Guid receiptDocumentId)
+            await EnsureDocumentMatchesContextAsync(receiptDocumentId, DocumentContextType.Memorial, memorialId, cancellationToken);
 
         dbContext.CasePresentations.Add(new CasePresentation
         {
             LegalCaseId = caseId,
             MemorialId = memorialId,
+            MemorialVersionId = approvedVersion.Id,
             PresentedAtUtc = request.PresentedAtUtc,
             Result = request.Result.Trim(),
             PresentedDocumentId = request.PresentedDocumentId,
@@ -475,7 +549,7 @@ internal sealed class CaseService(
     {
         EnsureStaffWrite(Permissions.CaseTimelineWrite);
         if (string.IsNullOrWhiteSpace(request.Description)) throw new ValidationException("La descripción de la notificación es obligatoria.");
-        await EnsureDocumentExistsAsync(request.DocumentId, cancellationToken);
+        await EnsureDocumentMatchesContextAsync(request.DocumentId, DocumentContextType.LegalCase, caseId, cancellationToken);
         var legalCase = await dbContext.LegalCases.SingleOrDefaultAsync(item => item.Id == caseId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el expediente.");
         EnsureCaseOpen(legalCase);
@@ -603,10 +677,51 @@ internal sealed class CaseService(
             throw new ConflictException("El expediente está cerrado o archivado.");
     }
 
-    private async Task EnsureDocumentExistsAsync(Guid id, CancellationToken cancellationToken)
+    private async Task EnsureDocumentMatchesContextAsync(
+        Guid id,
+        DocumentContextType contextType,
+        Guid contextId,
+        CancellationToken cancellationToken)
     {
-        if (!await dbContext.Documents.AnyAsync(item => item.Id == id && item.DeletedAtUtc == null, cancellationToken))
-            throw new NotFoundException("No se encontró el documento asociado.");
+        if (!await dbContext.Documents.AnyAsync(item =>
+                item.Id == id &&
+                item.ContextType == contextType &&
+                item.ContextId == contextId &&
+                item.IsCurrent &&
+                item.DeletedAtUtc == null,
+                cancellationToken))
+        {
+            throw new ValidationException("El documento no pertenece al registro que se está actualizando o no es su versión vigente.");
+        }
+    }
+
+    private async Task EnsureDocumentBelongsToCaseAsync(Guid id, Guid caseId, CancellationToken cancellationToken)
+    {
+        var document = await dbContext.Documents.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == id && item.IsCurrent && item.DeletedAtUtc == null,
+            cancellationToken)
+            ?? throw new NotFoundException("No se encontró el documento asociado.");
+
+        var ownerCaseId = document.ContextType switch
+        {
+            DocumentContextType.LegalCase => document.ContextId,
+            DocumentContextType.CaseRequirement => await dbContext.CaseRequirements
+                .Where(item => item.Id == document.ContextId)
+                .Select(item => (Guid?)item.LegalCaseId)
+                .SingleOrDefaultAsync(cancellationToken),
+            DocumentContextType.Timeline => await dbContext.TimelineEntries
+                .Where(item => item.Id == document.ContextId)
+                .Select(item => (Guid?)item.LegalCaseId)
+                .SingleOrDefaultAsync(cancellationToken),
+            DocumentContextType.Memorial => await dbContext.Memorials
+                .Where(item => item.Id == document.ContextId)
+                .Select(item => (Guid?)item.LegalCaseId)
+                .SingleOrDefaultAsync(cancellationToken),
+            _ => null
+        };
+
+        if (ownerCaseId != caseId)
+            throw new ValidationException("El documento no pertenece a este expediente.");
     }
 
     private void AddTimeline(LegalCase legalCase, TimelineEntry entry)
@@ -619,21 +734,66 @@ internal sealed class CaseService(
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private CaseDetailDto MapDetail(LegalCase legalCase, IReadOnlyDictionary<Guid, Guid?>? photos = null)
+    private static void ValidateCounterparty(SaveCounterpartyRequest request)
     {
-        var memorials = dbContext.Memorials.AsNoTracking()
+        var errors = new Dictionary<string, string[]>();
+        if (string.IsNullOrWhiteSpace(request.FullName))
+            errors["fullName"] = ["El nombre de la contraparte es obligatorio."];
+        if (!ContactNormalization.IsValidCui(request.Dpi, required: false))
+            errors["dpi"] = ["El DPI debe contener los 13 dígitos del CUI."];
+        if (!ContactNormalization.IsValidGuatemalaPhone(request.Phone))
+            errors["phone"] = ["El teléfono debe contener 8 dígitos o el prefijo +502."];
+        if (errors.Count > 0)
+            throw new ValidationException("Revise los datos de la contraparte.", errors);
+    }
+
+    private async Task<CaseDetailDto> MapDetailAsync(
+        LegalCase legalCase,
+        IReadOnlyDictionary<Guid, Guid?>? photos = null,
+        CancellationToken cancellationToken = default)
+    {
+        var memorialEntities = await dbContext.Memorials.AsNoTracking()
             .Include(item => item.Versions).ThenInclude(item => item.Reviews)
             .Where(item => item.LegalCaseId == legalCase.Id)
             .OrderBy(item => item.CreatedAtUtc)
-            .AsEnumerable()
-            .Select(Map)
-            .ToList();
+            .ToListAsync(cancellationToken);
+        var memorials = memorialEntities.Select(Map).ToList();
+        var presentations = await dbContext.CasePresentations.AsNoTracking()
+            .Where(item => item.LegalCaseId == legalCase.Id)
+            .OrderBy(item => item.PresentedAtUtc)
+            .Join(dbContext.Memorials.AsNoTracking(),
+                presentation => presentation.MemorialId,
+                memorial => (Guid?)memorial.Id,
+                (presentation, memorial) => new CasePresentationDto(
+                    presentation.Id,
+                    memorial.Id,
+                    memorial.Title,
+                    presentation.MemorialVersionId,
+                    presentation.PresentedAtUtc,
+                    presentation.Result,
+                    presentation.PresentedDocumentId,
+                    presentation.ReceiptDocumentId,
+                    presentation.CreatedByUserId))
+            .ToListAsync(cancellationToken);
+        var notifications = await dbContext.CourtNotifications.AsNoTracking()
+            .Where(item => item.LegalCaseId == legalCase.Id)
+            .OrderBy(item => item.NotifiedAtUtc)
+            .Select(item => new CourtNotificationDto(
+                item.Id,
+                item.NotifiedAtUtc,
+                item.Description,
+                item.DocumentId,
+                item.NewStage,
+                item.CreatedByUserId))
+            .ToListAsync(cancellationToken);
         return new CaseDetailDto(
             MapSummary(legalCase, photos),
             legalCase.Requirements.OrderBy(item => item.RequirementLabel).Select(Map).ToList(),
             legalCase.Counterparties.Select(Map).ToList(),
             legalCase.Timeline.OrderBy(item => item.OccurredAtUtc).Select(Map).ToList(),
-            memorials);
+            memorials,
+            presentations,
+            notifications);
     }
 
     private CaseSummaryDto MapSummary(LegalCase item, IReadOnlyDictionary<Guid, Guid?>? photos = null) => new(
@@ -648,7 +808,8 @@ internal sealed class CaseService(
         item.OpenedAtUtc,
         item.ClosedAtUtc,
         item.Timeline.OrderByDescending(value => value.OccurredAtUtc).Select(Map).FirstOrDefault(),
-        item.Assignments.OrderByDescending(value => value.IsPrimary).ThenBy(value => value.Student.FullName).Select(value => Map(value, photos)).ToList());
+        item.Assignments.OrderByDescending(value => value.IsPrimary).ThenBy(value => value.Student.FullName).Select(value => Map(value, photos)).ToList(),
+        item.ConcurrencyToken);
 
     private CaseRequirementDto Map(CaseRequirement item) => new(
         item.Id,
@@ -668,7 +829,7 @@ internal sealed class CaseService(
     private static CaseAssignmentDto Map(CaseAssignment item, IReadOnlyDictionary<Guid, Guid?>? photos = null) => new(
         item.Id, item.StudentId, item.Student.FullName,
         item.Student.UserAccountId is Guid userId && photos?.TryGetValue(userId, out var photo) == true ? photo : null,
-        item.IsPrimary, item.Status, item.AssignedAtUtc, item.EndedAtUtc);
+        item.IsPrimary, item.Status, item.AssignedAtUtc, item.EndedAtUtc, item.EndReason);
 
     private async Task<Dictionary<Guid, Guid?>> GetStudentPhotoMapAsync(IEnumerable<Student> students, CancellationToken cancellationToken)
     {

@@ -11,7 +11,7 @@ fuente. Los identificadores de fuente se definen en
 | Fuente | Evidencia funcional | Requerimientos relacionados | Flujos E2E | Casos de uso |
 |---|---|---|---|---|
 | SRC-CAP-01 | Inventario visual y ubicación de la carpeta de fuentes | Ninguno adicional | Ninguno | Ninguno |
-| SRC-REU-01 | Uso interno, roles, clientes, papelería, procesos, alumnos, búsqueda, seguimiento, reportes, trazabilidad y depuración | RF-AUT, RF-USR, RF-CLI-01 a 05, RF-TIP, RF-PRO, RF-ALU-01 a 07, RF-BUS, RF-ACT, RF-REP, RF-AUD, RF-DEP | E2E-01 a E2E-13 | CU-01 a CU-25 |
+| SRC-REU-01 | Uso interno, roles, clientes, papelería, procesos, alumnos, búsqueda, seguimiento, reportes, trazabilidad y depuración | RF-AUT, RF-USR, RF-CLI-01 a 05, RF-TIP, RF-PRO, RF-ALU-01 a 07, RF-BUS, RF-ACT, RF-REP, RF-AUD, RF-DEP, RF-ARC | E2E-01 a E2E-16 | CU-01 a CU-30 |
 | SRC-DOC-01 | Ficha del alumno, requisitos, datos académicos/laborales y asignación de práctica | RF-ALU-01 a 03, RF-ALU-08 a 11 | E2E-04, E2E-14 | CU-10, CU-27 a CU-29 |
 | SRC-DOC-02 | Ficha de recepción del cliente y declaración jurada de ingresos | RF-CLI-01, RF-CLI-06, RF-CLI-07 | E2E-02 | CU-04, CU-26 |
 | SRC-DOC-03 | Solicitud de secretaría ad honorem, expediente, resolución, carné, jornada y período | RF-USR-02, RF-ALU-08 a 11 | E2E-04, E2E-14 | CU-27 a CU-29 |

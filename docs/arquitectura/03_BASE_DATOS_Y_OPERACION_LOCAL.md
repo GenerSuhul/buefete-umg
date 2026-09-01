@@ -9,7 +9,8 @@ base a la red local.
 
 La configuración sensible reside en `.env`, excluido del control de versiones.
 `.env.example` contiene solo marcadores y nombres de variables. Para generar
-secretos locales:
+secretos locales que la API carga automáticamente al ejecutarse en
+`Development` desde Visual Studio o `dotnet run`:
 
 ```powershell
 .\scripts\bootstrap-local.ps1

@@ -9,9 +9,9 @@ import {
   Plus,
   UserRoundCheck,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { FilterBar, Pagination } from "../components/domain/Shared";
+import { FilterBar, Pagination, RelationLookup } from "../components/domain/Shared";
 import {
   Avatar,
   Badge,
@@ -25,12 +25,19 @@ import {
   ReadOnlyValue,
   WizardProgress,
   WizardStep,
+  Select,
 } from "../components/ui";
 import { dataSource } from "../data/dataSource";
 import { useAuth } from "../context/AuthContext";
 import { useAsyncData } from "../hooks/useAsyncData";
 import type { CaseStatus } from "../types/domain";
 import { formatDateTime, statusTone, translate } from "../utils/format";
+import {
+  formatCui,
+  formatGuatemalaPhone,
+  isCompleteCui,
+  isCompleteGuatemalaPhone,
+} from "../utils/inputMasks";
 
 const emptyForm = {
   clientId: "",
@@ -72,6 +79,7 @@ export function CasesPage() {
   const requestedClientId = searchParams.get("clientId") ?? "";
   const queryHandled = useRef(false);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [status, setStatus] = useState<CaseStatus | "">("");
   const [newOpen, setNewOpen] = useState(false);
   const [step, setStep] = useState(0);
@@ -83,24 +91,26 @@ export function CasesPage() {
       dataSource.listCases({
         search,
         status: status || undefined,
+        page,
         pageSize: 20,
       }),
-    [search, status],
+    [search, status, page],
   );
   const { data, error, loading, reload } = useAsyncData(loader, [
     search,
     status,
+    page,
   ]);
   const options = useAsyncData(async () => {
-    if (!canWrite) return { clients: [], processTypes: [] };
-    const [clients, processTypes] = await Promise.all([
-      dataSource.listClients({ pageSize: 100 }),
-      dataSource.listProcessTypes(),
-    ]);
+    if (!canWrite) return { processTypes: [] };
+    const processTypes = await dataSource.listProcessTypes();
     return {
-      clients: clients.items,
       processTypes: processTypes.filter((item) => item.isActive),
     };
+  }, []);
+  const loadClients = useCallback(async (term: string) => {
+    const result = await dataSource.listClients({ search: term, pageSize: 20 });
+    return result.items.map((client) => ({ value: client.id, label: `${client.fullName} · ${client.receptionNumber}` }));
   }, []);
   const selectedClient = useAsyncData(
     async () => (form.clientId ? dataSource.getClient(form.clientId) : null),
@@ -109,7 +119,7 @@ export function CasesPage() {
 
   useEffect(() => {
     if (!canWrite || !options.data || queryHandled.current) return;
-    const clientId = requestedClientId || options.data.clients[0]?.id || "";
+    const clientId = requestedClientId;
     const processTypeId = options.data.processTypes[0]?.id || "";
     setForm((current) => ({ ...current, clientId, processTypeId }));
     if (requestedClientId) {
@@ -136,7 +146,7 @@ export function CasesPage() {
   const open = () => {
     setForm({
       ...emptyForm,
-      clientId: options.data?.clients[0]?.id ?? "",
+      clientId: "",
       processTypeId: options.data?.processTypes[0]?.id ?? "",
     });
     setStep(0);
@@ -152,6 +162,10 @@ export function CasesPage() {
       !form.counterpartyName.trim()
     )
       return "Indique el nombre de la contraparte o elimine sus datos adicionales.";
+    if (target === 2 && form.counterpartyDpi && !isCompleteCui(form.counterpartyDpi))
+      return "El DPI de la contraparte debe contener los 13 dígitos del CUI.";
+    if (target === 2 && !isCompleteGuatemalaPhone(form.counterpartyPhone))
+      return "El teléfono debe contener 8 dígitos o el prefijo +502 seguido de 8 dígitos.";
     return null;
   };
   const next = () => {
@@ -261,22 +275,23 @@ export function CasesPage() {
       <Card className="directory-card">
         <FilterBar
           value={search}
-          onChange={setSearch}
+          onChange={(value) => { setSearch(value); setPage(1); }}
           placeholder="Buscar por expediente, cliente o proceso…"
         >
-          <select
+          <Select
             className="filter-select"
             value={status}
-            onChange={(event) =>
-              setStatus(event.target.value as CaseStatus | "")
-            }
+            onChange={(event) => {
+              setStatus(event.target.value as CaseStatus | "");
+              setPage(1);
+            }}
           >
             <option value="">Todos los estados</option>
             <option value="Active">Activos</option>
             <option value="DocumentCollection">Recolección documental</option>
             <option value="Suspended">Suspendidos</option>
             <option value="Closed">Cerrados</option>
-          </select>
+          </Select>
         </FilterBar>
         {loading ? (
           <LoadingState />
@@ -357,6 +372,7 @@ export function CasesPage() {
                 page={data.page}
                 totalPages={data.totalPages}
                 totalCount={data.totalCount}
+                onPageChange={setPage}
               />
             )}
           </>
@@ -397,21 +413,10 @@ export function CasesPage() {
                 hint={selectedClient.data?.client.receptionNumber}
               />
             ) : (
-              <Field label="Cliente">
-                <select
-                  value={form.clientId}
-                  onChange={(event) => update("clientId", event.target.value)}
-                >
-                  {options.data?.clients.map((client) => (
-                    <option key={client.id} value={client.id}>
-                      {client.fullName} · {client.receptionNumber}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <RelationLookup label="Cliente" required value={form.clientId} onChange={(value) => update("clientId", value)} load={loadClients} emptyLabel="Seleccione un cliente" />
             )}
             <Field label="Tipo de proceso">
-              <select
+              <Select
                 value={form.processTypeId}
                 onChange={(event) =>
                   update("processTypeId", event.target.value)
@@ -422,7 +427,7 @@ export function CasesPage() {
                     {item.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
             <ReadOnlyValue
               label="Estado inicial"
@@ -504,8 +509,11 @@ export function CasesPage() {
             <Field label="DPI">
               <input
                 value={form.counterpartyDpi}
+                inputMode="numeric"
+                maxLength={15}
+                placeholder="0000 00000 0000"
                 onChange={(event) =>
-                  update("counterpartyDpi", event.target.value)
+                  update("counterpartyDpi", formatCui(event.target.value))
                 }
               />
             </Field>
@@ -528,9 +536,11 @@ export function CasesPage() {
             <Field label="Teléfono">
               <input
                 type="tel"
+                inputMode="tel"
+                placeholder="0000 0000"
                 value={form.counterpartyPhone}
                 onChange={(event) =>
-                  update("counterpartyPhone", event.target.value)
+                  update("counterpartyPhone", formatGuatemalaPhone(event.target.value))
                 }
               />
             </Field>

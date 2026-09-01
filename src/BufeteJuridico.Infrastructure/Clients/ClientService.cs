@@ -2,13 +2,15 @@ using System.Net;
 using System.Text;
 using BufeteJuridico.Application.Clients;
 using BufeteJuridico.Application.Common;
+using BufeteJuridico.Application.Documents;
 using BufeteJuridico.Domain.Clients;
+using BufeteJuridico.Domain.Documents;
 using BufeteJuridico.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace BufeteJuridico.Infrastructure.Clients;
 
-internal sealed class ClientService(BufeteDbContext dbContext, TimeProvider timeProvider) : IClientService
+internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService documentService, TimeProvider timeProvider) : IClientService
 {
     public async Task<PagedResult<ClientDto>> GetClientsAsync(
         string? search,
@@ -101,8 +103,13 @@ internal sealed class ClientService(BufeteDbContext dbContext, TimeProvider time
         Validate(request);
         var client = await dbContext.Clients.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
             ?? throw new NotFoundException("No se encontró el cliente.");
+        if (request.ConcurrencyToken is not Guid concurrencyToken || concurrencyToken == Guid.Empty)
+            throw new ValidationException("La versión del cliente es obligatoria para guardar cambios.");
+        dbContext.Entry(client).Property(item => item.ConcurrencyToken).OriginalValue = concurrencyToken;
 
         await EnsureDpiAvailableAsync(request.Dpi, id, cancellationToken);
+        if (request.SignatureDocumentId is Guid signatureDocumentId)
+            await documentService.EnsureDocumentMatchesContextAsync(signatureDocumentId, DocumentContextType.Client, id, cancellationToken);
         Apply(client, request);
         await dbContext.SaveChangesAsync(cancellationToken);
         return Map(client);
@@ -119,11 +126,19 @@ internal sealed class ClientService(BufeteDbContext dbContext, TimeProvider time
         {
             throw new ValidationException("Nombre, residencia y lugar son obligatorios en la declaración.");
         }
+        if (!ContactNormalization.IsValidCui(request.Dpi, required: false))
+            throw new ValidationException("El DPI debe contener los 13 dígitos del CUI.");
+        if (!ContactNormalization.IsValidGuatemalaPhone(request.Phone) ||
+            !ContactNormalization.IsValidGuatemalaPhone(request.MobilePhone))
+            throw new ValidationException("Los teléfonos deben contener 8 dígitos o el prefijo +502.");
 
         if (!await dbContext.Clients.AnyAsync(item => item.Id == clientId && item.IsActive, cancellationToken))
         {
             throw new NotFoundException("No se encontró el cliente.");
         }
+
+        if (request.SignedDocumentId is Guid signedDocumentId)
+            await documentService.EnsureDocumentMatchesContextAsync(signedDocumentId, DocumentContextType.Client, clientId, cancellationToken);
 
         var declaration = new IncomeDeclaration
         {
@@ -132,12 +147,12 @@ internal sealed class ClientService(BufeteDbContext dbContext, TimeProvider time
             DeclaredAge = request.DeclaredAge,
             MaritalStatus = Clean(request.MaritalStatus),
             Sex = Clean(request.Sex),
-            Dpi = Clean(request.Dpi),
+            Dpi = ContactNormalization.Cui(request.Dpi),
             Occupation = Clean(request.Occupation),
             Nationality = Clean(request.Nationality),
             ResidenceAddress = request.ResidenceAddress.Trim(),
-            Phone = Clean(request.Phone),
-            MobilePhone = Clean(request.MobilePhone),
+            Phone = ContactNormalization.GuatemalaPhone(request.Phone),
+            MobilePhone = ContactNormalization.GuatemalaPhone(request.MobilePhone),
             Workplace = Clean(request.Workplace),
             WorkAddress = Clean(request.WorkAddress),
             SalaryAmount = request.SalaryAmount,
@@ -201,8 +216,12 @@ internal sealed class ClientService(BufeteDbContext dbContext, TimeProvider time
 
     private async Task EnsureDpiAvailableAsync(string? dpi, Guid? existingId, CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(dpi) &&
-            await dbContext.Clients.AnyAsync(item => item.Id != existingId && item.Dpi == dpi.Trim(), cancellationToken))
+        var digits = ContactNormalization.Digits(dpi);
+        if (digits.Length > 0 &&
+            await dbContext.Clients.AnyAsync(item =>
+                item.Id != existingId && item.Dpi != null &&
+                item.Dpi.Replace(" ", "").Replace("-", "") == digits,
+                cancellationToken))
         {
             throw new ConflictException("Ya existe un cliente con el mismo DPI.");
         }
@@ -215,11 +234,15 @@ internal sealed class ClientService(BufeteDbContext dbContext, TimeProvider time
     {
         var errors = new Dictionary<string, string[]>();
         if (string.IsNullOrWhiteSpace(request.FullName)) errors["fullName"] = ["El nombre es obligatorio."];
+        if (!ContactNormalization.IsValidCui(request.Dpi)) errors["dpi"] = ["El DPI debe contener los 13 dígitos del CUI."];
         if (string.IsNullOrWhiteSpace(request.ResidenceAddress)) errors["residenceAddress"] = ["La dirección es obligatoria."];
         if (string.IsNullOrWhiteSpace(request.AssistanceRequested)) errors["assistanceRequested"] = ["La asistencia solicitada es obligatoria."];
         if (string.IsNullOrWhiteSpace(request.ReceptionPlace)) errors["receptionPlace"] = ["El lugar de recepción es obligatorio."];
         if (request.ChildrenCount < 0) errors["childrenCount"] = ["La cantidad de hijos no puede ser negativa."];
         if (request.SalaryAmount < 0) errors["salaryAmount"] = ["El salario no puede ser negativo."];
+        if (!ContactNormalization.IsValidGuatemalaPhone(request.Phone)) errors["phone"] = ["El teléfono debe contener 8 dígitos o el prefijo +502."];
+        if (!ContactNormalization.IsValidGuatemalaPhone(request.MobilePhone)) errors["mobilePhone"] = ["El celular debe contener 8 dígitos o el prefijo +502."];
+        if (!ContactNormalization.IsValidGuatemalaPhone(request.WorkPhone)) errors["workPhone"] = ["El teléfono de trabajo debe contener 8 dígitos o el prefijo +502."];
         if (errors.Count > 0) throw new ValidationException("Revise los datos del cliente.", errors);
     }
 
@@ -233,15 +256,15 @@ internal sealed class ClientService(BufeteDbContext dbContext, TimeProvider time
         client.Nationality = Clean(request.Nationality);
         client.Sex = Clean(request.Sex);
         client.MaritalStatus = Clean(request.MaritalStatus);
-        client.Dpi = Clean(request.Dpi);
+        client.Dpi = ContactNormalization.Cui(request.Dpi);
         client.ResidenceAddress = request.ResidenceAddress.Trim();
         client.Education = Clean(request.Education);
         client.Occupation = Clean(request.Occupation);
         client.Workplace = Clean(request.Workplace);
         client.WorkAddress = Clean(request.WorkAddress);
-        client.WorkPhone = Clean(request.WorkPhone);
-        client.Phone = Clean(request.Phone);
-        client.MobilePhone = Clean(request.MobilePhone);
+        client.WorkPhone = ContactNormalization.GuatemalaPhone(request.WorkPhone);
+        client.Phone = ContactNormalization.GuatemalaPhone(request.Phone);
+        client.MobilePhone = ContactNormalization.GuatemalaPhone(request.MobilePhone);
         client.SalaryAmount = request.SalaryAmount;
         client.SalaryFrequency = Clean(request.SalaryFrequency);
         client.ChildrenCount = request.ChildrenCount;
@@ -287,7 +310,8 @@ internal sealed class ClientService(BufeteDbContext dbContext, TimeProvider time
         item.ReceptionDate,
         item.SignatureDocumentId,
         item.IsActive,
-        item.CreatedAtUtc);
+        item.CreatedAtUtc,
+        item.ConcurrencyToken);
 
     private static IncomeDeclarationDto Map(IncomeDeclaration item) => new(
         item.Id,

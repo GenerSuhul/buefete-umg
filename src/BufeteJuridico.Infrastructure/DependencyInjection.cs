@@ -1,6 +1,7 @@
 using Amazon;
 using Amazon.Runtime;
 using Amazon.S3;
+using BufeteJuridico.Application.Administration;
 using BufeteJuridico.Application.Cases;
 using BufeteJuridico.Application.Catalogs;
 using BufeteJuridico.Application.Clients;
@@ -11,6 +12,7 @@ using BufeteJuridico.Application.Operations;
 using BufeteJuridico.Application.Queries;
 using BufeteJuridico.Application.Students;
 using BufeteJuridico.Domain.Identity;
+using BufeteJuridico.Infrastructure.Administration;
 using BufeteJuridico.Infrastructure.Cases;
 using BufeteJuridico.Infrastructure.Catalogs;
 using BufeteJuridico.Infrastructure.Clients;
@@ -98,6 +100,7 @@ public static class DependencyInjection
         services.AddScoped<IEmailSender, SmtpEmailSender>();
         services.AddScoped<IActivityReportService, ActivityReportService>();
         services.AddScoped<IQueryService, QueryService>();
+        services.AddScoped<IDeletedRecordService, DeletedRecordService>();
         services.AddScoped<IDatabaseInitializer, DatabaseInitializer>();
 
         var healthChecks = services.AddHealthChecks().AddDbContextCheck<BufeteDbContext>(

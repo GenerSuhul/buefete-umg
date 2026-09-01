@@ -49,7 +49,13 @@ public interface IDocumentService
 
     Task<DocumentDto> GetMetadataAsync(Guid id, CancellationToken cancellationToken);
 
-    Task<PagedResult<DocumentDto>> GetForContextAsync(DocumentContextType contextType, Guid contextId, int page, int pageSize, CancellationToken cancellationToken);
+    Task<PagedResult<DocumentDto>> GetForContextAsync(
+        DocumentContextType contextType,
+        Guid contextId,
+        string? label,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
 
     Task<PagedResult<DocumentDto>> GetDocumentsAsync(
         DocumentContextType? contextType,
@@ -64,6 +70,8 @@ public interface IDocumentService
     Task<DocumentReadUrlDto> GetReadUrlAsync(Guid id, CancellationToken cancellationToken);
 
     Task EnsureContextAccessAsync(DocumentContextType contextType, Guid contextId, bool write, CancellationToken cancellationToken);
+
+    Task EnsureDocumentMatchesContextAsync(Guid documentId, DocumentContextType contextType, Guid contextId, CancellationToken cancellationToken);
 }
 
 public interface IFileStorage

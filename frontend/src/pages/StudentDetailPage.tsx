@@ -10,16 +10,21 @@ import {
   Pencil,
   Phone,
   UserRoundPlus,
+  UserMinus,
+  FilePlus2,
+  Trash2,
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { DetailTabs, InfoItem } from "../components/domain/Shared";
+import { DocumentAcquisition } from "../components/documents/DocumentAcquisition";
 import {
   Avatar,
   Badge,
   Button,
   Card,
-  DatePickerField,
+  AppDatePicker,
+  DocumentLink,
   ErrorState,
   Field,
   FilePicker,
@@ -27,17 +32,26 @@ import {
   Modal,
   PageHeader,
   SectionHeading,
+  Select,
 } from "../components/ui";
 import { dataSource } from "../data/dataSource";
+import { feedbackHandled } from "../components/ui/feedback/operationFeedback";
 import { useAuth } from "../context/AuthContext";
 import { useAsyncData } from "../hooks/useAsyncData";
-import type { StudentRequirement } from "../types/domain";
+import { useConfirm } from "../components/ui/Feedback";
+import type { StudentProfile, StudentRequirement } from "../types/domain";
 import { formatDate, statusTone, translate } from "../utils/format";
+import { toLocalDateOnly } from "../utils/date";
+import {
+  formatCui,
+  formatGuatemalaPhone,
+  isCompleteCui,
+  isCompleteGuatemalaPhone,
+} from "../utils/inputMasks";
 
 const emptyEdit = {
   fullName: "",
   birthDate: "",
-  ageAtRegistration: "",
   studentCardNumber: "",
   dpi: "",
   semester: "",
@@ -53,24 +67,51 @@ const emptyEdit = {
   registrationDate: "",
 };
 
+const enrollmentStatusLabels: Record<string, string> = {
+  Draft: "Borrador",
+  Submitted: "Presentada",
+  Admitted: "Admitida",
+  UnderReview: "En revisión",
+  Observed: "Observada",
+  Approved: "Aprobada",
+  Rejected: "Rechazada",
+  Completed: "Completada",
+};
+
+const enrollmentTransitions: Record<string, string[]> = {
+  Draft: ["Submitted"],
+  Submitted: ["Admitted", "UnderReview", "Observed", "Approved", "Rejected"],
+  Admitted: ["UnderReview", "Observed", "Approved", "Rejected"],
+  UnderReview: ["Observed", "Approved", "Rejected"],
+  Observed: ["UnderReview"],
+  Approved: ["Completed"],
+  Rejected: [],
+  Completed: [],
+};
+
 export function StudentDetailPage() {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const canWrite = Boolean(
     user?.permissions.includes("*") ||
       user?.permissions.includes("students.write"),
   );
+  const canDelete = Boolean(user?.permissions.includes("*") || user?.permissions.includes("records.delete"));
+  const canAssign = Boolean(user?.permissions.includes("*") || user?.permissions.includes("cases.assign"));
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const [tab, setTab] = useState("enrollment");
   const [action, setAction] = useState<
-    "edit" | "access" | "requirement" | "status" | "card" | null
+    "edit" | "access" | "requirement" | "status" | "card" | "unassign" | null
   >(null);
   const [selectedRequirement, setSelectedRequirement] =
     useState<StudentRequirement | null>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const [scanRequirement, setScanRequirement] = useState<StudentRequirement | null>(null);
   const [studentPhoto, setStudentPhoto] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
+  const [caseToEnd, setCaseToEnd] = useState<StudentProfile["cases"][number] | null>(null);
+  const [unassignReason, setUnassignReason] = useState("");
   const [editForm, setEditForm] = useState(emptyEdit);
   const [requirementForm, setRequirementForm] = useState({
     status: "Submitted",
@@ -84,7 +125,7 @@ export function StudentDetailPage() {
   });
   const [cardForm, setCardForm] = useState({
     cardNumber: "",
-    issuedDate: new Date().toISOString().slice(0, 10),
+    issuedDate: toLocalDateOnly(),
     expirationDate: "",
     markDelivered: true,
   });
@@ -96,6 +137,16 @@ export function StudentDetailPage() {
     () => dataSource.getStudent(id),
     [id],
   );
+
+  const deleteStudent = async (name: string) => {
+    const accepted = await confirm({ title: "Eliminar alumno", message: `${name} perderá el acceso y dejará de aparecer en alumnos y asignaciones.`, confirmLabel: "Enviar a Eliminados", tone: "danger" });
+    if (!accepted) return;
+    setBusy(true);
+    try {
+      await dataSource.deleteStudent(id, "Eliminado desde el perfil del alumno");
+      navigate("/personas/alumnos", { replace: true });
+    } finally { setBusy(false); }
+  };
 
   if (loading) return <LoadingState label="Abriendo perfil del alumno" />;
   if (error || !data)
@@ -110,23 +161,28 @@ export function StudentDetailPage() {
   const accepted =
     enrollment?.requirements.filter((item) => item.status === "Accepted")
       .length ?? 0;
+  const availableStatuses = enrollment
+    ? [enrollment.status, ...(enrollmentTransitions[enrollment.status] ?? [])]
+    : [];
+  const pendingMandatoryRequirements = enrollment?.requirements.filter(
+    (item) => item.isRequired !== false && item.status !== "Accepted",
+  ) ?? [];
 
   const startEdit = () => {
     setEditForm({
       fullName: student.fullName,
       birthDate: student.birthDate ?? "",
-      ageAtRegistration: student.ageAtRegistration?.toString() ?? "",
       studentCardNumber: student.studentCardNumber,
-      dpi: student.dpi,
+      dpi: formatCui(student.dpi),
       semester: student.semester?.toString() ?? "",
       studyShift: student.studyShift ?? "",
       workplace: student.workplace ?? "",
-      workPhone: student.workPhone ?? "",
+      workPhone: formatGuatemalaPhone(student.workPhone ?? ""),
       immediateSupervisor: student.immediateSupervisor ?? "",
       jobTitle: student.jobTitle ?? "",
       residenceAddress: student.residenceAddress,
-      mobilePhone: student.mobilePhone ?? "",
-      homePhone: student.homePhone ?? "",
+      mobilePhone: formatGuatemalaPhone(student.mobilePhone ?? ""),
+      homePhone: formatGuatemalaPhone(student.homePhone ?? ""),
       email: student.email,
       registrationDate: student.registrationDate,
     });
@@ -169,15 +225,21 @@ export function StudentDetailPage() {
     }
   };
   const saveStudent = async () => {
+    if (!isCompleteCui(editForm.dpi)) {
+      setFormError("El DPI debe contener los 13 dígitos del CUI.");
+      return;
+    }
+    if ([editForm.mobilePhone, editForm.homePhone, editForm.workPhone].some((value) => !isCompleteGuatemalaPhone(value))) {
+      setFormError("Los teléfonos deben contener 8 dígitos o el prefijo +502 seguido de 8 dígitos.");
+      return;
+    }
     setBusy(true);
     setFormError("");
     try {
       await dataSource.updateStudent(id, {
         fullName: editForm.fullName,
         birthDate: editForm.birthDate || null,
-        ageAtRegistration: editForm.ageAtRegistration
-          ? Number(editForm.ageAtRegistration)
-          : null,
+        ageAtRegistration: null,
         studentCardNumber: editForm.studentCardNumber,
         dpi: editForm.dpi,
         semester: editForm.semester ? Number(editForm.semester) : null,
@@ -191,6 +253,7 @@ export function StudentDetailPage() {
         homePhone: editForm.homePhone || null,
         email: editForm.email,
         registrationDate: editForm.registrationDate,
+        concurrencyToken: student.concurrencyToken,
       });
       if (studentPhoto) {
         if (!student.userAccountId)
@@ -227,9 +290,22 @@ export function StudentDetailPage() {
       setBusy(false);
     }
   };
+  const endAssignment = async () => {
+    if (!caseToEnd || !unassignReason.trim()) return;
+    setBusy(true);
+    setFormError("");
+    try {
+      await dataSource.endAssignment(caseToEnd.caseId, caseToEnd.assignmentId, unassignReason.trim());
+      setAction(null);
+      setCaseToEnd(null);
+      setUnassignReason("");
+      await reload();
+    } catch (reason) {
+      setFormError(reason instanceof Error ? reason.message : "No se pudo desasignar el caso.");
+    } finally { setBusy(false); }
+  };
   const openRequirement = (item: StudentRequirement) => {
     setSelectedRequirement(item);
-    setFile(null);
     setRequirementForm({
       status: item.status,
       dataValue: item.dataValue ?? "",
@@ -244,23 +320,12 @@ export function StudentDetailPage() {
     setBusy(true);
     setFormError("");
     try {
-      let documentId = selectedRequirement.documentId;
-      if (file)
-        documentId = (
-          await dataSource.uploadDocument({
-            file,
-            contextType: "Enrollment",
-            contextId: enrollment.id,
-            label: selectedRequirement.label,
-            replaceDocumentId: selectedRequirement.documentId,
-          })
-        ).id;
       await dataSource.updateStudentRequirement(
         enrollment.id,
         selectedRequirement.id,
         {
           status: requirementForm.status,
-          documentId,
+          documentId: selectedRequirement.documentId,
           dataValue: requirementForm.dataValue || null,
           documentIssueDate: requirementForm.documentIssueDate || null,
           notes: requirementForm.notes || null,
@@ -317,7 +382,7 @@ export function StudentDetailPage() {
       setFormError(
         reason instanceof Error
           ? reason.message
-          : "No se pudo emitir el carné.",
+          : "No se pudo registrar el carné.",
       );
     } finally {
       setBusy(false);
@@ -354,6 +419,7 @@ export function StudentDetailPage() {
               >
                 {student.isActive ? "Dar de baja" : "Reactivar"}
               </Button>
+              {canDelete ? <Button variant="danger" disabled={busy} onClick={() => deleteStudent(student.fullName)}><Trash2 size={17} />Eliminar</Button> : null}
               <Button onClick={() => navigate("/expedientes")}>
                 <FolderKanban size={17} />
                 Asignar caso
@@ -482,7 +548,7 @@ export function StudentDetailPage() {
                         setAction("card");
                       }}
                     >
-                      Emitir carné de práctica
+                      Registrar carné de práctica
                     </Button>
                   )}
               </Card>
@@ -517,10 +583,9 @@ export function StudentDetailPage() {
               </div>
               <div className="requirement-cards">
                 {enrollment.requirements.map((requirement) => (
-                  <button
-                    className="requirement-card requirement-card--button"
+                  <div
+                    className="requirement-card"
                     key={requirement.id}
-                    onClick={() => openRequirement(requirement)}
                   >
                     <span
                       className={`requirement-card__icon ${requirement.status === "Pending" ? "pending" : ""}`}
@@ -539,8 +604,12 @@ export function StudentDetailPage() {
                     <Badge tone={statusTone(requirement.status)}>
                       {translate(requirement.status)}
                     </Badge>
-                    <Pencil size={16} />
-                  </button>
+                    <span className="inline-actions">
+                      {requirement.documentId ? <DocumentLink documentId={requirement.documentId} label="Ver" /> : null}
+                      {canWrite ? <Button variant="ghost" size="sm" onClick={() => setScanRequirement(requirement)}><FilePlus2 size={15} /> {requirement.documentId ? "Reemplazar" : "Adjuntar"}</Button> : null}
+                      {canWrite ? <Button variant="ghost" size="sm" onClick={() => openRequirement(requirement)}><Pencil size={15} /> Revisar</Button> : null}
+                    </span>
+                  </div>
                 ))}
               </div>
             </Card>
@@ -554,25 +623,26 @@ export function StudentDetailPage() {
               {data.cases.length ? (
                 <div className="related-list">
                   {data.cases.map((legalCase) => (
-                    <Link
-                      to={`/expedientes/${legalCase.caseId}`}
+                    <div
+                      className="related-list__row"
                       key={legalCase.caseId}
                     >
                       <span className="related-list__icon">
                         <FolderKanban size={19} />
                       </span>
                       <span>
-                        <strong>
+                        <Link to={`/expedientes/${legalCase.caseId}`}><strong>
                           {legalCase.caseNumber} · {legalCase.clientName}
-                        </strong>
+                        </strong></Link>
                         <small>
-                          {legalCase.processType} · {legalCase.lastStep}
+                          {legalCase.processType} · {legalCase.assignmentStatus === "Active" ? (legalCase.lastStep ?? "Sin movimientos") : `Participación finalizada${legalCase.endReason ? `: ${legalCase.endReason}` : ""}`}
                         </small>
                       </span>
-                      <Badge tone={statusTone(legalCase.status)}>
-                        {translate(legalCase.status)}
-                      </Badge>
-                    </Link>
+                      <div className="inline-actions">
+                        <Badge tone={legalCase.assignmentStatus === "Active" ? "success" : "neutral"}>{translate(legalCase.assignmentStatus)}</Badge>
+                        {canAssign && legalCase.assignmentStatus === "Active" ? <Button variant="ghost" size="sm" onClick={() => { setCaseToEnd(legalCase); setUnassignReason(""); setFormError(""); setAction("unassign"); }}><UserMinus size={15} /> Desasignar</Button> : null}
+                      </div>
+                    </div>
                   ))}
                 </div>
               ) : (
@@ -731,6 +801,7 @@ export function StudentDetailPage() {
                 !editForm.studentCardNumber ||
                 !editForm.dpi ||
                 !editForm.email ||
+                !editForm.studyShift ||
                 !editForm.residenceAddress
               }
               onClick={saveStudent}
@@ -750,6 +821,7 @@ export function StudentDetailPage() {
           />
         ) : null}
         <div className="form-grid">
+          <div className="form-section-heading field--wide"><strong>Identidad y contacto</strong><span>Datos oficiales y medios de contacto del alumno.</span></div>
           <Field label="Nombre completo">
             <input
               value={editForm.fullName}
@@ -758,21 +830,14 @@ export function StudentDetailPage() {
               }
             />
           </Field>
-          <Field label="Edad">
-            <input
-              type="number"
-              min="15"
-              max="100"
-              value={editForm.ageAtRegistration}
-              onChange={(event) =>
-                setEditForm({
-                  ...editForm,
-                  ageAtRegistration: event.target.value,
-                  birthDate: "",
-                })
-              }
-            />
-          </Field>
+          <AppDatePicker
+            label="Fecha de nacimiento"
+            preset="birthDate"
+            value={editForm.birthDate}
+            onChange={(birthDate) => setEditForm({ ...editForm, birthDate })}
+            max={editForm.registrationDate}
+            required
+          />
           <Field label="Carné">
             <input
               value={editForm.studentCardNumber}
@@ -788,8 +853,11 @@ export function StudentDetailPage() {
             <input
               value={editForm.dpi}
               onChange={(event) =>
-                setEditForm({ ...editForm, dpi: event.target.value })
+                setEditForm({ ...editForm, dpi: formatCui(event.target.value) })
               }
+              inputMode="numeric"
+              maxLength={15}
+              placeholder="0000 00000 0000"
             />
           </Field>
           <Field label="Correo de acceso">
@@ -803,17 +871,23 @@ export function StudentDetailPage() {
           </Field>
           <Field label="Teléfono móvil">
             <input
+              type="tel"
+              inputMode="tel"
+              placeholder="0000 0000"
               value={editForm.mobilePhone}
               onChange={(event) =>
-                setEditForm({ ...editForm, mobilePhone: event.target.value })
+                setEditForm({ ...editForm, mobilePhone: formatGuatemalaPhone(event.target.value) })
               }
             />
           </Field>
           <Field label="Teléfono residencial">
             <input
+              type="tel"
+              inputMode="tel"
+              placeholder="0000 0000"
               value={editForm.homePhone}
               onChange={(event) =>
-                setEditForm({ ...editForm, homePhone: event.target.value })
+                setEditForm({ ...editForm, homePhone: formatGuatemalaPhone(event.target.value) })
               }
             />
           </Field>
@@ -828,6 +902,7 @@ export function StudentDetailPage() {
               }
             />
           </Field>
+          <div className="form-section-heading field--wide"><strong>Información académica</strong><span>Datos de la práctica y registro universitario.</span></div>
           <Field label="Semestre">
             <input
               type="number"
@@ -839,13 +914,28 @@ export function StudentDetailPage() {
             />
           </Field>
           <Field label="Jornada">
-            <input
+            <Select
               value={editForm.studyShift}
               onChange={(event) =>
                 setEditForm({ ...editForm, studyShift: event.target.value })
               }
-            />
+            >
+              <option value="">Seleccione una jornada</option>
+              <option value="Matutina">Matutina</option>
+              <option value="Vespertina">Vespertina</option>
+              <option value="Nocturna">Nocturna</option>
+            </Select>
           </Field>
+          <AppDatePicker
+            label="Fecha de inscripción"
+            preset="processDate"
+            value={editForm.registrationDate}
+            onChange={(registrationDate) =>
+              setEditForm({ ...editForm, registrationDate })
+            }
+            required
+          />
+          <div className="form-section-heading field--wide"><strong>Información laboral</strong><span>Datos opcionales del lugar de trabajo.</span></div>
           <Field label="Lugar de trabajo">
             <input
               value={editForm.workplace}
@@ -856,9 +946,12 @@ export function StudentDetailPage() {
           </Field>
           <Field label="Teléfono de trabajo">
             <input
+              type="tel"
+              inputMode="tel"
+              placeholder="0000 0000"
               value={editForm.workPhone}
               onChange={(event) =>
-                setEditForm({ ...editForm, workPhone: event.target.value })
+                setEditForm({ ...editForm, workPhone: formatGuatemalaPhone(event.target.value) })
               }
             />
           </Field>
@@ -881,16 +974,18 @@ export function StudentDetailPage() {
               }
             />
           </Field>
-          <DatePickerField
-            label="Fecha de inscripción"
-            value={editForm.registrationDate}
-            onChange={(registrationDate) =>
-              setEditForm({ ...editForm, registrationDate })
-            }
-            required
-          />
         </div>
         {formError && <p className="form-error">{formError}</p>}
+      </Modal>
+      <Modal
+        open={action === "unassign"}
+        onClose={() => !busy && setAction(null)}
+        title="Desasignar del expediente"
+        description={caseToEnd ? `${caseToEnd.caseNumber} dejará de figurar como asignación activa. La participación anterior permanecerá en el histórico.` : ""}
+        footer={<><Button variant="secondary" disabled={busy} onClick={() => setAction(null)}>Cancelar</Button><Button disabled={busy || !unassignReason.trim()} onClick={endAssignment}>{busy ? "Guardando…" : "Confirmar desasignación"}</Button></>}
+      >
+        <Field label="Motivo de desasignación"><textarea value={unassignReason} onChange={(event) => setUnassignReason(event.target.value)} maxLength={500} /></Field>
+        {formError ? <p className="form-error" role="alert">{formError}</p> : null}
       </Modal>
       <Modal
         size="lg"
@@ -915,7 +1010,7 @@ export function StudentDetailPage() {
       >
         <div className="form-grid">
           <Field label="Estado">
-            <select
+            <Select
               value={requirementForm.status}
               onChange={(event) =>
                 setRequirementForm({
@@ -930,20 +1025,15 @@ export function StudentDetailPage() {
               <option value="Observed">Observado</option>
               <option value="Expired">Vencido</option>
               <option value="NotApplicable">No aplica</option>
-            </select>
+            </Select>
           </Field>
-          <DatePickerField
+          <AppDatePicker
             label="Fecha de emisión"
+            preset="processDate"
             value={requirementForm.documentIssueDate}
             onChange={(documentIssueDate) =>
               setRequirementForm({ ...requirementForm, documentIssueDate })
             }
-          />
-          <FilePicker
-            label="Documento"
-            hint="PDF, JPG, PNG o WEBP"
-            file={file}
-            onChange={setFile}
           />
           <Field label="Dato">
             <input
@@ -970,6 +1060,30 @@ export function StudentDetailPage() {
         </div>
         {formError && <p className="form-error">{formError}</p>}
       </Modal>
+      <DocumentAcquisition
+        open={!!scanRequirement && !!enrollment}
+        onClose={() => setScanRequirement(null)}
+        contexts={enrollment ? { Enrollment: [{ id: enrollment.id, label: `Inscripción de ${student.fullName}` }] } : undefined}
+        initialForm={{
+          contextType: "Enrollment",
+          contextId: enrollment?.id ?? "",
+          label: scanRequirement?.label ?? "Documento de inscripción",
+          replaceDocumentId: scanRequirement?.documentId ?? "",
+        }}
+        contextLocked
+        onCompleted={async (document) => {
+          if (!enrollment || !scanRequirement) return;
+          await dataSource.updateStudentRequirement(enrollment.id, scanRequirement.id, feedbackHandled({
+            status: scanRequirement.status === "Pending" ? "Submitted" : scanRequirement.status,
+            documentId: document.id,
+            dataValue: scanRequirement.dataValue,
+            documentIssueDate: scanRequirement.documentIssueDate,
+            notes: scanRequirement.notes,
+          }));
+          setScanRequirement(null);
+          await reload();
+        }}
+      />
       <Modal
         open={action === "status"}
         onClose={() => !busy && setAction(null)}
@@ -984,7 +1098,7 @@ export function StudentDetailPage() {
             >
               Cancelar
             </Button>
-            <Button disabled={busy} onClick={saveStatus}>
+            <Button disabled={busy || (statusForm.status === "Approved" && pendingMandatoryRequirements.length > 0)} onClick={saveStatus}>
               Guardar estado
             </Button>
           </>
@@ -992,21 +1106,20 @@ export function StudentDetailPage() {
       >
         <div className="form-grid">
           <Field label="Nuevo estado">
-            <select
+            <Select
               value={statusForm.status}
               onChange={(event) =>
                 setStatusForm({ ...statusForm, status: event.target.value })
               }
             >
-              <option value="Draft">Borrador</option>
-              <option value="Submitted">Presentada</option>
-              <option value="Admitted">Admitida</option>
-              <option value="UnderReview">En revisión</option>
-              <option value="Observed">Observada</option>
-              <option value="Approved">Aprobada</option>
-              <option value="Rejected">Rechazada</option>
-              <option value="Completed">Completada</option>
-            </select>
+              {availableStatuses.map((status) => (
+                <option key={status} value={status}>
+                  {status === enrollment?.status
+                    ? `${enrollmentStatusLabels[status]} (actual)`
+                    : enrollmentStatusLabels[status]}
+                </option>
+              ))}
+            </Select>
           </Field>
           <Field label="Resolución u observaciones">
             <textarea
@@ -1020,12 +1133,20 @@ export function StudentDetailPage() {
             />
           </Field>
         </div>
+        {statusForm.status === "Approved" && pendingMandatoryRequirements.length > 0 ? (
+          <div className="form-error" role="alert">
+            <strong>Requisitos obligatorios pendientes:</strong>
+            <ul>
+              {pendingMandatoryRequirements.map((item) => <li key={item.id}>{item.label}</li>)}
+            </ul>
+          </div>
+        ) : null}
         {formError && <p className="form-error">{formError}</p>}
       </Modal>
       <Modal
         open={action === "card"}
         onClose={() => !busy && setAction(null)}
-        title="Emitir carné de práctica"
+        title="Registrar carné de práctica"
         description="Disponible únicamente para inscripciones aprobadas."
         footer={
           <>
@@ -1040,7 +1161,7 @@ export function StudentDetailPage() {
               disabled={busy || !cardForm.cardNumber || !cardForm.issuedDate}
               onClick={saveCard}
             >
-              Emitir carné
+              Registrar carné
             </Button>
           </>
         }
@@ -1054,21 +1175,24 @@ export function StudentDetailPage() {
               }
             />
           </Field>
-          <DatePickerField
+          <AppDatePicker
             label="Fecha de emisión"
+            preset="startDate"
             value={cardForm.issuedDate}
             onChange={(issuedDate) => setCardForm({ ...cardForm, issuedDate })}
             required
           />
-          <DatePickerField
+          <AppDatePicker
             label="Vencimiento"
+            preset="endDate"
+            min={cardForm.issuedDate || undefined}
             value={cardForm.expirationDate}
             onChange={(expirationDate) =>
               setCardForm({ ...cardForm, expirationDate })
             }
           />
           <Field label="Entrega">
-            <select
+            <Select
               value={String(cardForm.markDelivered)}
               onChange={(event) =>
                 setCardForm({
@@ -1079,7 +1203,7 @@ export function StudentDetailPage() {
             >
               <option value="true">Marcar entregado</option>
               <option value="false">Pendiente de entrega</option>
-            </select>
+            </Select>
           </Field>
         </div>
         {formError && <p className="form-error">{formError}</p>}

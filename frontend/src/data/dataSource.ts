@@ -9,6 +9,8 @@ import type {
   DashboardData,
   DocumentRecord,
   DocumentReadAccess,
+  DeletedRecord,
+  DeletedRecordType,
   CreateUserInput,
   PagedResult,
   ProcessType,
@@ -20,6 +22,7 @@ import type {
   SearchResult,
   Student,
   StudentAccess,
+  StudentAssignmentCandidate,
   StudentProfile,
   StudentRegistration,
   TimelineEntry,
@@ -28,6 +31,9 @@ import type {
   UserWriteInput,
   WeeklyReport,
 } from "../types/domain";
+import { hasOperationFeedback, isOperationFeedbackHandled, withOperationFeedback } from "../components/ui/feedback/operationFeedback";
+import { humanizeOperationError } from "../components/ui/feedback/feedbackBus";
+import { readAuthSession, writeAuthSession } from "./authSession";
 const mockMode =
   import.meta.env.MODE === "test" ||
   import.meta.env.VITE_DATA_SOURCE === "mock";
@@ -45,6 +51,30 @@ const studentProfiles = mockData?.studentProfiles ?? [];
 const students = mockData?.students ?? [];
 const users = mockData?.users ?? [];
 const weeklyReports = mockData?.weeklyReports ?? [];
+const mockDeletedRecords: DeletedRecord[] = [];
+
+const mockDeleted = (type: DeletedRecordType, id: string) =>
+  mockDeletedRecords.some((record) => record.type === type && record.id === id);
+
+const addMockDeletedRecord = (
+  type: DeletedRecordType,
+  id: string,
+  name: string,
+  reference: string,
+  reason?: string,
+) => {
+  if (mockDeleted(type, id)) return;
+  mockDeletedRecords.unshift({
+    id,
+    type,
+    name,
+    reference,
+    deletedAtUtc: new Date().toISOString(),
+    deletedByUserId: users[0]?.id ?? null,
+    deletedByName: users[0]?.fullName ?? null,
+    reason: reason?.trim() || null,
+  });
+};
 
 interface ListOptions {
   search?: string;
@@ -54,6 +84,7 @@ interface ListOptions {
 
 export interface DataSource {
   readonly mode: "mock" | "api";
+  getPlatformHealth(): Promise<PlatformHealth>;
   login(email: string, password: string): Promise<TokenResponse>;
   logout(): Promise<void>;
   getDashboard(): Promise<DashboardData>;
@@ -61,14 +92,15 @@ export interface DataSource {
   getClient(id: string): Promise<ClientProfile>;
   createClient(input: Record<string, unknown>): Promise<Client>;
   updateClient(id: string, input: Record<string, unknown>): Promise<Client>;
+  deleteClient(id: string, reason?: string): Promise<void>;
   createIncomeDeclaration(
     clientId: string,
     _input: Record<string, unknown>,
   ): Promise<unknown>;
   getIncomeDeclarationPrint(id: string): Promise<Blob>;
   listStudents(options?: ListOptions): Promise<PagedResult<Student>>;
+  listStudentAssignmentCandidates(caseId: string, search?: string): Promise<PagedResult<StudentAssignmentCandidate>>;
   getStudent(id: string): Promise<StudentProfile>;
-  createStudent(input: Record<string, unknown>): Promise<Student>;
   registerStudent(input: Record<string, unknown>): Promise<StudentRegistration>;
   provisionStudentAccess(
     studentId: string,
@@ -76,6 +108,7 @@ export interface DataSource {
   ): Promise<StudentAccess>;
   updateStudent(id: string, input: Record<string, unknown>): Promise<Student>;
   setStudentActive(id: string, isActive: boolean): Promise<Student>;
+  deleteStudent(id: string, reason?: string): Promise<void>;
   createEnrollment(
     studentId: string,
     input: Record<string, unknown>,
@@ -97,6 +130,7 @@ export interface DataSource {
     options?: ListOptions & { status?: CaseStatus },
   ): Promise<PagedResult<CaseSummary>>;
   getCase(id: string): Promise<CaseDetail>;
+  updateCase(id: string, input: { status: CaseStatus; stage: string; concurrencyToken: string }): Promise<CaseDetail>;
   listProcessTypes(): Promise<ProcessType[]>;
   createProcessType(
     input: Omit<ProcessType, "id" | "requirements">,
@@ -123,6 +157,7 @@ export interface DataSource {
     studentId: string,
     isPrimary: boolean,
   ): Promise<unknown>;
+  endAssignment(caseId: string, assignmentId: string, reason: string): Promise<void>;
   addTimelineEntry(
     caseId: string,
     input: Record<string, unknown>,
@@ -134,6 +169,11 @@ export interface DataSource {
   ): Promise<unknown>;
   addCounterparty(
     caseId: string,
+    input: Record<string, unknown>,
+  ): Promise<unknown>;
+  updateCounterparty(
+    caseId: string,
+    counterpartyId: string,
     input: Record<string, unknown>,
   ): Promise<unknown>;
   createMemorial(
@@ -161,8 +201,17 @@ export interface DataSource {
   ): Promise<unknown>;
   closeCase(caseId: string, input: Record<string, unknown>): Promise<void>;
   reopenCase(caseId: string, reason: string): Promise<void>;
+  deleteCase(id: string, reason?: string): Promise<void>;
+  listDeletedRecords(options?: ListOptions & { type?: DeletedRecordType }): Promise<PagedResult<DeletedRecord>>;
+  restoreDeletedRecord(type: DeletedRecordType, id: string): Promise<void>;
   listDocuments(
     options?: ListOptions & { contextType?: string; contextId?: string },
+  ): Promise<PagedResult<DocumentRecord>>;
+  getDocument(id: string): Promise<DocumentRecord>;
+  listDocumentHistory(
+    contextType: string,
+    contextId: string,
+    options?: Pick<ListOptions, "page" | "pageSize"> & { label?: string },
   ): Promise<PagedResult<DocumentRecord>>;
   uploadDocument(input: {
     file: File;
@@ -183,7 +232,7 @@ export interface DataSource {
       "id" | "isCorrected" | "correctionReason" | "createdByUserId"
     >,
   ): Promise<Activity>;
-  listReports(): Promise<WeeklyReport[]>;
+  listReports(options?: Pick<ListOptions, "page" | "pageSize">): Promise<PagedResult<WeeklyReport>>;
   generateReport(start: string, end: string): Promise<WeeklyReport>;
   reviewReport(id: string): Promise<WeeklyReport>;
   sendReport(
@@ -250,6 +299,7 @@ export interface DataSource {
   previewScanSession(id: string): Promise<Blob>;
   completeScanSession(id: string): Promise<DocumentRecord>;
   cancelScanSession(id: string): Promise<ScanSession>;
+  reportScanFailure(id: string, code: string, message: string): Promise<ScanSession>;
   listAudit(
     options?: ListOptions & { entityType?: string; userId?: string },
   ): Promise<PagedResult<AuditLog>>;
@@ -257,6 +307,14 @@ export interface DataSource {
     options?: ListOptions,
   ): Promise<PagedResult<RetentionCandidate>>;
   search(term: string): Promise<PagedResult<SearchResult>>;
+}
+
+export interface PlatformHealth {
+  status: "Healthy" | "Degraded" | "Unhealthy";
+  checks: Array<{
+    name: string;
+    status: "Healthy" | "Degraded" | "Unhealthy";
+  }>;
 }
 
 const delayMs = Number(import.meta.env.VITE_MOCK_DELAY_MS ?? 180);
@@ -372,10 +430,14 @@ function includes(value: string | null | undefined, term: string) {
 class MockDataSource implements DataSource {
   readonly mode = "mock" as const;
 
+  async getPlatformHealth(): Promise<PlatformHealth> {
+    return { status: "Healthy", checks: [] };
+  }
+
   async login(email: string, password: string): Promise<TokenResponse> {
     await wait();
-    if (!email.trim() || !password.trim())
-      throw new Error("Ingrese correo y contraseña.");
+    if (email.trim().toLowerCase() !== users[0].email.toLowerCase() || password !== "demo-local")
+      throw new Error("Usuario o contraseña incorrectos.");
     return {
       accessToken: "mock-access-token",
       accessTokenExpiresAtUtc: new Date(Date.now() + 15 * 60_000).toISOString(),
@@ -407,20 +469,23 @@ class MockDataSource implements DataSource {
 
   async listClients(options: ListOptions = {}) {
     await wait();
+    const available = clients.filter((item) => !mockDeleted("Client", item.id));
     const filtered = options.search
-      ? clients.filter(
+      ? available.filter(
           (item) =>
             includes(item.fullName, options.search!) ||
             includes(item.receptionNumber, options.search!) ||
             includes(item.dpi, options.search!),
         )
-      : clients;
+      : available;
     return clone(page(filtered, options));
   }
 
   async getClient(id: string) {
     await wait();
-    const result = clientProfiles.find((item) => item.client.id === id);
+    const result = !mockDeleted("Client", id)
+      ? clientProfiles.find((item) => item.client.id === id)
+      : undefined;
     if (!result) throw new Error("Cliente no encontrado.");
     return clone(result);
   }
@@ -429,11 +494,13 @@ class MockDataSource implements DataSource {
     const created = {
       id: crypto.randomUUID(),
       receptionNumber: `REC-${Date.now()}`,
+      concurrencyToken: crypto.randomUUID(),
       isActive: true,
       createdAtUtc: new Date().toISOString(),
       ...input,
     } as unknown as Client;
     clients.unshift(created);
+    clientProfiles.unshift({ client: created, incomeDeclarations: [], cases: [] });
     return clone(created);
   }
   async updateClient(id: string, input: Record<string, unknown>) {
@@ -441,7 +508,14 @@ class MockDataSource implements DataSource {
     const client = clients.find((item) => item.id === id);
     if (!client) throw new Error("Cliente no encontrado.");
     Object.assign(client, input);
+    client.concurrencyToken = crypto.randomUUID();
     return clone(client);
+  }
+  async deleteClient(id: string, reason?: string) {
+    await wait();
+    const client = clients.find((item) => item.id === id);
+    if (!client) throw new Error("Cliente no encontrado.");
+    addMockDeletedRecord("Client", id, client.fullName, client.receptionNumber, reason);
   }
   async createIncomeDeclaration() {
     await wait();
@@ -454,20 +528,34 @@ class MockDataSource implements DataSource {
 
   async listStudents(options: ListOptions = {}) {
     await wait();
+    const available = students.filter((item) => !mockDeleted("Student", item.id));
     const filtered = options.search
-      ? students.filter(
+      ? available.filter(
           (item) =>
             includes(item.fullName, options.search!) ||
             includes(item.studentCardNumber, options.search!) ||
             includes(item.email, options.search!),
         )
-      : students;
+      : available;
     return clone(page(filtered, options));
+  }
+  async listStudentAssignmentCandidates(caseId: string, search = "") {
+    const assigned = cases.find((item) => item.summary.id === caseId)?.summary.assignments ?? [];
+    const assignedIds = new Set(assigned.filter((item) => item.status === "Active").map((item) => item.studentId));
+    const items = students
+      .filter((student) => !mockDeleted("Student", student.id))
+      .filter((student) => student.isActive && !assignedIds.has(student.id))
+      .filter((student) => studentProfiles.find((profile) => profile.student.id === student.id)?.enrollments.some((enrollment) => enrollment.status === "Approved"))
+      .filter((student) => !search || includes(student.fullName, search) || includes(student.studentCardNumber, search) || includes(student.email, search))
+      .map(({ id, photoDocumentId = null, fullName, studentCardNumber }) => ({ id, photoDocumentId, fullName, studentCardNumber }));
+    return clone(page(items, { page: 1, pageSize: 100 }));
   }
 
   async getStudent(id: string) {
     await wait();
-    const result = studentProfiles.find((item) => item.student.id === id);
+    const result = !mockDeleted("Student", id)
+      ? studentProfiles.find((item) => item.student.id === id)
+      : undefined;
     if (!result) throw new Error("Alumno no encontrado.");
     return clone(result);
   }
@@ -476,6 +564,7 @@ class MockDataSource implements DataSource {
     const created = {
       id: crypto.randomUUID(),
       userAccountId: null,
+      concurrencyToken: crypto.randomUUID(),
       isActive: true,
       ...input,
     } as unknown as Student;
@@ -524,6 +613,7 @@ class MockDataSource implements DataSource {
     const student = students.find((item) => item.id === id);
     if (!student) throw new Error("Alumno no encontrado.");
     Object.assign(student, input);
+    student.concurrencyToken = crypto.randomUUID();
     return clone(student);
   }
   async setStudentActive(id: string, isActive: boolean) {
@@ -533,28 +623,50 @@ class MockDataSource implements DataSource {
     student.isActive = isActive;
     return clone(student);
   }
+  async deleteStudent(id: string, reason?: string) {
+    await wait();
+    const student = students.find((item) => item.id === id);
+    if (!student) throw new Error("Alumno no encontrado.");
+    addMockDeletedRecord("Student", id, student.fullName, student.studentCardNumber, reason);
+  }
   async createEnrollment() {
     await wait();
     return {};
   }
-  async changeEnrollmentStatus() {
+  async changeEnrollmentStatus(enrollmentId: string, input: Record<string, unknown>) {
     await wait();
-    return {};
+    const enrollment = studentProfiles.flatMap((profile) => profile.enrollments).find((item) => item.id === enrollmentId);
+    if (!enrollment) throw new Error("Inscripción no encontrada.");
+    Object.assign(enrollment, input);
+    return clone(enrollment);
   }
-  async updateStudentRequirement() {
+  async updateStudentRequirement(enrollmentId: string, requirementId: string, input: Record<string, unknown>) {
     await wait();
-    return {};
+    const enrollment = studentProfiles.flatMap((profile) => profile.enrollments).find((item) => item.id === enrollmentId);
+    const requirement = enrollment?.requirements.find((item) => item.id === requirementId);
+    if (!requirement) throw new Error("Requisito no encontrado.");
+    Object.assign(requirement, input);
+    return clone(requirement);
   }
-  async issueClinicCard() {
+  async issueClinicCard(enrollmentId: string, input: Record<string, unknown>) {
     await wait();
-    return {};
+    const enrollment = studentProfiles.flatMap((profile) => profile.enrollments).find((item) => item.id === enrollmentId);
+    if (!enrollment) throw new Error("Inscripción no encontrada.");
+    Object.assign(enrollment, {
+      clinicCardNumber: input.cardNumber,
+      clinicCardIssuedDate: input.issuedDate,
+      clinicCardExpirationDate: input.expirationDate,
+      clinicCardDeliveredAtUtc: input.markDelivered ? new Date().toISOString() : null,
+    });
+    return clone(enrollment);
   }
 
   async listCases(options: ListOptions & { status?: CaseStatus } = {}) {
     await wait();
+    const available = caseSummaries.filter((item) => !mockDeleted("LegalCase", item.id));
     let filtered = options.status
-      ? caseSummaries.filter((item) => item.status === options.status)
-      : caseSummaries;
+      ? available.filter((item) => item.status === options.status)
+      : available;
     if (options.search)
       filtered = filtered.filter(
         (item) =>
@@ -567,8 +679,19 @@ class MockDataSource implements DataSource {
 
   async getCase(id: string) {
     await wait();
+    const result = !mockDeleted("LegalCase", id)
+      ? cases.find((item) => item.summary.id === id)
+      : undefined;
+    if (!result) throw new Error("Expediente no encontrado.");
+    return clone(result);
+  }
+  async updateCase(id: string, input: { status: CaseStatus; stage: string; concurrencyToken: string }) {
+    await wait();
     const result = cases.find((item) => item.summary.id === id);
     if (!result) throw new Error("Expediente no encontrado.");
+    result.summary.status = input.status;
+    result.summary.stage = input.stage;
+    result.summary.concurrencyToken = crypto.randomUUID();
     return clone(result);
   }
   async listProcessTypes() {
@@ -630,6 +753,7 @@ class MockDataSource implements DataSource {
       throw new Error("Datos del expediente no válidos.");
     const summary: CaseSummary = {
       id: crypto.randomUUID(),
+      concurrencyToken: crypto.randomUUID(),
       caseNumber: `BJ-${new Date().getFullYear()}-${String(caseSummaries.length + 1).padStart(4, "0")}`,
       clientId: client.id,
       clientName: client.fullName,
@@ -648,6 +772,8 @@ class MockDataSource implements DataSource {
       counterparties: [],
       timeline: [],
       memorials: [],
+      presentations: [],
+      courtNotifications: [],
     };
     caseSummaries.unshift(summary);
     cases.unshift(detail);
@@ -666,8 +792,23 @@ class MockDataSource implements DataSource {
       status: "Active",
       assignedAtUtc: new Date().toISOString(),
       endedAtUtc: null,
+      endReason: null,
     });
     return {};
+  }
+  async endAssignment(caseId: string, assignmentId: string, reason: string) {
+    await wait();
+    const detail = cases.find((item) => item.summary.id === caseId);
+    const assignment = detail?.summary.assignments.find((item) => item.id === assignmentId);
+    if (!assignment || assignment.status !== "Active") throw new Error("No se encontró la asignación activa.");
+    assignment.status = "Cancelled";
+    assignment.endedAtUtc = new Date().toISOString();
+    const profileCase = studentProfiles.flatMap((profile) => profile.cases).find((item) => item.assignmentId === assignmentId);
+    if (profileCase) {
+      profileCase.assignmentStatus = "Cancelled";
+      profileCase.endedAtUtc = assignment.endedAtUtc;
+      profileCase.endReason = reason;
+    }
   }
   async addTimelineEntry(caseId: string, input: Record<string, unknown>) {
     await wait();
@@ -689,6 +830,10 @@ class MockDataSource implements DataSource {
     return {};
   }
   async addCounterparty() {
+    await wait();
+    return {};
+  }
+  async updateCounterparty() {
     await wait();
     return {};
   }
@@ -716,6 +861,28 @@ class MockDataSource implements DataSource {
   async reopenCase() {
     await wait();
   }
+  async deleteCase(id: string, reason?: string) {
+    await wait();
+    const legalCase = caseSummaries.find((item) => item.id === id);
+    if (!legalCase) throw new Error("Expediente no encontrado.");
+    addMockDeletedRecord("LegalCase", id, legalCase.clientName, legalCase.caseNumber, reason);
+  }
+  async listDeletedRecords(options: ListOptions & { type?: DeletedRecordType } = {}) {
+    await wait();
+    let filtered = options.type
+      ? mockDeletedRecords.filter((record) => record.type === options.type)
+      : mockDeletedRecords;
+    const search = options.search;
+    if (search)
+      filtered = filtered.filter((record) => includes(record.name, search) || includes(record.reference, search));
+    return clone(page(filtered, options));
+  }
+  async restoreDeletedRecord(type: DeletedRecordType, id: string) {
+    await wait();
+    const index = mockDeletedRecords.findIndex((record) => record.type === type && record.id === id);
+    if (index < 0) throw new Error("El registro ya no está disponible para restauración.");
+    mockDeletedRecords.splice(index, 1);
+  }
 
   async listDocuments(
     options: ListOptions & { contextType?: string; contextId?: string } = {},
@@ -735,6 +902,29 @@ class MockDataSource implements DataSource {
           includes(item.label, options.search!),
       );
     return clone(page(filtered, options));
+  }
+
+  async getDocument(id: string) {
+    await wait();
+    const document = documents.find((item) => item.id === id);
+    if (!document) throw new Error("Documento no encontrado.");
+    return clone(document);
+  }
+
+  async listDocumentHistory(
+    contextType: string,
+    contextId: string,
+    options: Pick<ListOptions, "page" | "pageSize"> & { label?: string } = {},
+  ) {
+    await wait();
+    const normalizedLabel = options.label?.trim().toLocaleLowerCase();
+    return clone(page(
+      documents.filter(
+        (item) => item.contextType === contextType && item.contextId === contextId &&
+          (!normalizedLabel || item.label.toLocaleLowerCase() === normalizedLabel),
+      ),
+      options,
+    ));
   }
 
   async uploadDocument(input: {
@@ -810,9 +1000,9 @@ class MockDataSource implements DataSource {
     return clone(activity);
   }
 
-  async listReports() {
+  async listReports(options: Pick<ListOptions, "page" | "pageSize"> = {}) {
     await wait();
-    return clone(weeklyReports);
+    return clone(page(weeklyReports, options));
   }
   async generateReport(start: string, end: string) {
     await wait();
@@ -1129,6 +1319,15 @@ class MockDataSource implements DataSource {
     session.cancelledAtUtc = new Date().toISOString();
     return clone(session);
   }
+  async reportScanFailure(id: string, code: string, message: string) {
+    await wait();
+    const session = mockScanSessions.get(id);
+    if (!session) throw new Error("Sesión no encontrada.");
+    session.status = "Failed";
+    session.failureCode = code;
+    session.failureMessage = message;
+    return clone(session);
+  }
   async listAudit(
     options: ListOptions & { entityType?: string; userId?: string } = {},
   ) {
@@ -1201,22 +1400,23 @@ class MockDataSource implements DataSource {
   }
 }
 
-const TOKEN_KEY = "bufete_umg_session";
 const baseUrl = (
   import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:5103/api/v1"
 ).replace(/\/$/, "");
+const readinessUrl = new URL(
+  "../../health/ready",
+  `${new URL(baseUrl, window.location.origin).toString()}/`,
+).toString();
 
 class ApiClient {
   private refreshPromise: Promise<boolean> | null = null;
 
   private get session(): TokenResponse | null {
-    const raw = sessionStorage.getItem(TOKEN_KEY);
-    return raw ? (JSON.parse(raw) as TokenResponse) : null;
+    return readAuthSession();
   }
 
   setSession(value: TokenResponse | null) {
-    if (value) sessionStorage.setItem(TOKEN_KEY, JSON.stringify(value));
-    else sessionStorage.removeItem(TOKEN_KEY);
+    writeAuthSession(value);
   }
 
   currentUserId() {
@@ -1234,7 +1434,12 @@ class ApiClient {
       headers.set("Content-Type", "application/json");
     if (!anonymous && this.session?.accessToken)
       headers.set("Authorization", `Bearer ${this.session.accessToken}`);
-    const response = await fetch(`${baseUrl}${path}`, { ...init, headers });
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}${path}`, { ...init, headers });
+    } catch (cause) {
+      throw new Error(humanizeOperationError(cause));
+    }
     if (
       response.status === 401 &&
       !anonymous &&
@@ -1248,11 +1453,10 @@ class ApiClient {
         detail?: string;
         title?: string;
       } | null;
-      throw new Error(
-        problem?.detail ??
-          problem?.title ??
-          "No se pudo completar la solicitud.",
-      );
+      const message = problem?.detail ?? problem?.title ?? "No se pudo completar la solicitud.";
+      const userMessage = humanizeOperationError(new Error(message));
+      if (userMessage !== message) console.error("API operation failed", { path, status: response.status, message });
+      throw new Error(userMessage);
     }
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
@@ -1266,7 +1470,12 @@ class ApiClient {
     const headers = new Headers(init.headers);
     if (this.session?.accessToken)
       headers.set("Authorization", `Bearer ${this.session.accessToken}`);
-    const response = await fetch(`${baseUrl}${path}`, { ...init, headers });
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}${path}`, { ...init, headers });
+    } catch (cause) {
+      throw new Error(humanizeOperationError(cause));
+    }
     if (response.status === 401 && !retried && (await this.refreshSession()))
       return this.requestBlob(path, init, true);
     if (!response.ok) {
@@ -1274,11 +1483,10 @@ class ApiClient {
         detail?: string;
         title?: string;
       } | null;
-      throw new Error(
-        problem?.detail ??
-          problem?.title ??
-          "No se pudo completar la solicitud.",
-      );
+      const message = problem?.detail ?? problem?.title ?? "No se pudo completar la solicitud.";
+      const userMessage = humanizeOperationError(new Error(message));
+      if (userMessage !== message) console.error("API document request failed", { path, status: response.status, message });
+      throw new Error(userMessage);
     }
     return response.blob();
   }
@@ -1293,16 +1501,18 @@ class ApiClient {
       body: JSON.stringify({ refreshToken: current.refreshToken }),
     })
       .then(async (response) => {
-        if (!response.ok) {
+        if ([400, 401, 403].includes(response.status)) {
           this.setSession(null);
+          window.dispatchEvent(new Event("bufete:session-expired"));
           return false;
         }
+        if (!response.ok)
+          throw new Error("El servidor no pudo renovar la sesión en este momento.");
         this.setSession((await response.json()) as TokenResponse);
         return true;
       })
-      .catch(() => {
-        this.setSession(null);
-        return false;
+      .catch((cause: unknown) => {
+        throw new Error(humanizeOperationError(cause));
       })
       .finally(() => {
         this.refreshPromise = null;
@@ -1315,6 +1525,19 @@ class ApiDataSource implements DataSource {
   readonly mode = "api" as const;
   private readonly api = new ApiClient();
   private readonly reportCache: WeeklyReport[] = [];
+  async getPlatformHealth(): Promise<PlatformHealth> {
+    let response: Response;
+    try {
+      response = await fetch(readinessUrl, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (cause) {
+      throw new Error(humanizeOperationError(cause));
+    }
+    if (!response.ok) throw new Error("Los servicios no están disponibles.");
+    return response.json() as Promise<PlatformHealth>;
+  }
   async login(email: string, password: string) {
     const result = await this.api.request<TokenResponse>(
       "/auth/login",
@@ -1325,9 +1548,8 @@ class ApiDataSource implements DataSource {
     return result;
   }
   async logout() {
-    const raw = sessionStorage.getItem(TOKEN_KEY);
-    if (raw) {
-      const session = JSON.parse(raw) as TokenResponse;
+    const session = readAuthSession();
+    if (session) {
       await this.api
         .request<void>("/auth/revoke", {
           method: "POST",
@@ -1358,6 +1580,9 @@ class ApiDataSource implements DataSource {
       body: JSON.stringify(input),
     });
   }
+  deleteClient(id: string, reason?: string) {
+    return this.api.request<void>(`/clients/${id}`, { method: "DELETE", body: JSON.stringify({ reason: reason || null }) });
+  }
   createIncomeDeclaration(clientId: string, input: Record<string, unknown>) {
     return this.api.request(`/clients/${clientId}/income-declarations`, {
       method: "POST",
@@ -1372,14 +1597,15 @@ class ApiDataSource implements DataSource {
       `/students?${query(options)}`,
     );
   }
+  listStudentAssignmentCandidates(caseId: string, search = "") {
+    const parameters = new URLSearchParams({ caseId });
+    if (search.trim()) parameters.set("search", search.trim());
+    parameters.set("page", "1");
+    parameters.set("pageSize", "50");
+    return this.api.request<PagedResult<StudentAssignmentCandidate>>(`/students/assignment-candidates?${parameters}`);
+  }
   getStudent(id: string) {
     return this.api.request<StudentProfile>(`/students/${id}/profile`);
-  }
-  createStudent(input: Record<string, unknown>) {
-    return this.api.request<Student>("/students", {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
   }
   registerStudent(input: Record<string, unknown>) {
     return this.api.request<StudentRegistration>("/students/registration", {
@@ -1404,6 +1630,9 @@ class ApiDataSource implements DataSource {
       method: "PUT",
       body: JSON.stringify({ isActive }),
     });
+  }
+  deleteStudent(id: string, reason?: string) {
+    return this.api.request<void>(`/students/${id}`, { method: "DELETE", body: JSON.stringify({ reason: reason || null }) });
   }
   createEnrollment(studentId: string, input: Record<string, unknown>) {
     return this.api.request(`/students/${studentId}/enrollments`, {
@@ -1440,6 +1669,12 @@ class ApiDataSource implements DataSource {
   }
   getCase(id: string) {
     return this.api.request<CaseDetail>(`/cases/${id}`);
+  }
+  updateCase(id: string, input: { status: CaseStatus; stage: string; concurrencyToken: string }) {
+    return this.api.request<CaseDetail>(`/cases/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
   }
   listProcessTypes() {
     return this.api.request<ProcessType[]>("/catalogs/process-types");
@@ -1488,6 +1723,12 @@ class ApiDataSource implements DataSource {
       body: JSON.stringify({ studentId, isPrimary }),
     });
   }
+  endAssignment(caseId: string, assignmentId: string, reason: string) {
+    return this.api.request<void>(`/cases/${caseId}/assignments/${assignmentId}/end`, {
+      method: "PUT",
+      body: JSON.stringify({ status: "Cancelled", reason }),
+    });
+  }
   addTimelineEntry(caseId: string, input: Record<string, unknown>) {
     return this.api.request(`/cases/${caseId}/timeline`, {
       method: "POST",
@@ -1507,6 +1748,16 @@ class ApiDataSource implements DataSource {
   addCounterparty(caseId: string, input: Record<string, unknown>) {
     return this.api.request(`/cases/${caseId}/counterparties`, {
       method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+  updateCounterparty(
+    caseId: string,
+    counterpartyId: string,
+    input: Record<string, unknown>,
+  ) {
+    return this.api.request(`/cases/${caseId}/counterparties/${counterpartyId}`, {
+      method: "PUT",
       body: JSON.stringify(input),
     });
   }
@@ -1564,11 +1815,32 @@ class ApiDataSource implements DataSource {
       body: JSON.stringify({ reason }),
     });
   }
+  deleteCase(id: string, reason?: string) {
+    return this.api.request<void>(`/cases/${id}`, { method: "DELETE", body: JSON.stringify({ reason: reason || null }) });
+  }
+  listDeletedRecords(options: ListOptions & { type?: DeletedRecordType } = {}) {
+    return this.api.request<PagedResult<DeletedRecord>>(`/deleted-records?${query(options)}`);
+  }
+  restoreDeletedRecord(type: DeletedRecordType, id: string) {
+    return this.api.request<void>(`/deleted-records/${type}/${id}/restore`, { method: "POST" });
+  }
   listDocuments(
     options: ListOptions & { contextType?: string; contextId?: string } = {},
   ) {
     return this.api.request<PagedResult<DocumentRecord>>(
       `/documents?${query(options)}`,
+    );
+  }
+  getDocument(id: string) {
+    return this.api.request<DocumentRecord>(`/documents/${id}`);
+  }
+  listDocumentHistory(
+    contextType: string,
+    contextId: string,
+    options: Pick<ListOptions, "page" | "pageSize"> & { label?: string } = {},
+  ) {
+    return this.api.request<PagedResult<DocumentRecord>>(
+      `/documents/context/${encodeURIComponent(contextType)}/${encodeURIComponent(contextId)}/history?${query(options)}`,
     );
   }
   uploadDocument(input: {
@@ -1616,10 +1888,10 @@ class ApiDataSource implements DataSource {
       body: JSON.stringify(input),
     });
   }
-  async listReports() {
-    const reports = await this.api.request<WeeklyReport[]>("/reports");
-    this.reportCache.splice(0, this.reportCache.length, ...reports);
-    return [...this.reportCache];
+  async listReports(options: Pick<ListOptions, "page" | "pageSize"> = {}) {
+    const reports = await this.api.request<PagedResult<WeeklyReport>>(`/reports?${query(options)}`);
+    this.reportCache.splice(0, this.reportCache.length, ...reports.items);
+    return reports;
   }
   async generateReport(start: string, end: string) {
     const report = await this.api.request<WeeklyReport>("/reports/weekly", {
@@ -1813,6 +2085,12 @@ class ApiDataSource implements DataSource {
       method: "POST",
     });
   }
+  reportScanFailure(id: string, code: string, message: string) {
+    return this.api.request<ScanSession>(`/scan-sessions/${id}/failure`, {
+      method: "POST",
+      body: JSON.stringify({ code, message }),
+    });
+  }
   listAudit(
     options: ListOptions & { entityType?: string; userId?: string } = {},
   ) {
@@ -1849,6 +2127,19 @@ function query(values: object) {
   return params.toString();
 }
 
-export const dataSource: DataSource = mockMode
+const source: DataSource = mockMode
   ? new MockDataSource()
   : new ApiDataSource();
+
+export const dataSource: DataSource = new Proxy(source, {
+  get(target, property) {
+    const member = Reflect.get(target, property, target);
+    if (typeof member !== "function") return member;
+    return (...args: unknown[]) => {
+      const invoke = () => Promise.resolve(member.apply(target, args));
+      return typeof property === "string" && hasOperationFeedback(property) && !isOperationFeedbackHandled(args)
+        ? withOperationFeedback(property, args, invoke)
+        : member.apply(target, args);
+    };
+  },
+});

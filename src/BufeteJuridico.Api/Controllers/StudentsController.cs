@@ -1,3 +1,4 @@
+using BufeteJuridico.Application.Administration;
 using BufeteJuridico.Application.Authorization;
 using BufeteJuridico.Application.Common;
 using BufeteJuridico.Application.Students;
@@ -7,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace BufeteJuridico.Api.Controllers;
 
 [Authorize]
-public sealed class StudentsController(IStudentService service) : ApiV1ControllerBase
+public sealed class StudentsController(IStudentService service, IDeletedRecordService deletedRecords) : ApiV1ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<PagedResult<StudentDto>>> GetAll(
@@ -17,6 +18,16 @@ public sealed class StudentsController(IStudentService service) : ApiV1Controlle
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<StudentDto>> Get(Guid id, CancellationToken cancellationToken) =>
         Ok(await service.GetStudentAsync(id, cancellationToken));
+
+    [HttpGet("assignment-candidates")]
+    [Authorize(Policy = Permissions.CasesAssign)]
+    public async Task<ActionResult<PagedResult<StudentAssignmentCandidateDto>>> GetAssignmentCandidates(
+        Guid caseId,
+        string? search,
+        int page = 1,
+        int pageSize = 25,
+        CancellationToken cancellationToken = default) =>
+        Ok(await service.GetAssignmentCandidatesAsync(caseId, search, page, pageSize, cancellationToken));
 
     [HttpGet("{id:guid}/profile")]
     public async Task<ActionResult<StudentProfileDto>> GetProfile(Guid id, CancellationToken cancellationToken) =>
@@ -47,6 +58,14 @@ public sealed class StudentsController(IStudentService service) : ApiV1Controlle
     [Authorize(Policy = Permissions.StudentsWrite)]
     public async Task<ActionResult<StudentDto>> Update(Guid id, SaveStudentRequest request, CancellationToken cancellationToken) =>
         Ok(await service.UpdateStudentAsync(id, request, cancellationToken));
+
+    [HttpDelete("{id:guid}")]
+    [Authorize(Policy = Permissions.RecordsDelete)]
+    public async Task<IActionResult> Delete(Guid id, DeleteRecordRequest request, CancellationToken cancellationToken)
+    {
+        await deletedRecords.DeleteAsync(DeletedRecordType.Student, id, request.Reason, cancellationToken);
+        return NoContent();
+    }
 
     [HttpPut("{id:guid}/active")]
     [Authorize(Policy = Permissions.StudentsWrite)]

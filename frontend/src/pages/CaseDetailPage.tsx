@@ -4,25 +4,31 @@ import {
   Check,
   CircleDot,
   FileCheck2,
+  FilePlus2,
   FilePenLine,
   FileText,
   FolderKanban,
   Gavel,
   History,
   Plus,
+  Pencil,
   Send,
   UserPlus,
+  UserMinus,
+  Trash2,
   UsersRound,
 } from "lucide-react";
-import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { DetailTabs, InfoItem } from "../components/domain/Shared";
+import { useCallback, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { DetailTabs, InfoItem, RelationLookup } from "../components/domain/Shared";
+import { DocumentAcquisition } from "../components/documents/DocumentAcquisition";
 import {
   Avatar,
   Badge,
   Button,
   Card,
-  DatePickerField,
+  AppDatePicker,
+  DocumentLink,
   ErrorState,
   Field,
   FilePicker,
@@ -30,12 +36,17 @@ import {
   Modal,
   PageHeader,
   SectionHeading,
+  Select,
 } from "../components/ui";
 import { dataSource } from "../data/dataSource";
+import { feedbackHandled } from "../components/ui/feedback/operationFeedback";
 import { useAuth } from "../context/AuthContext";
 import { useAsyncData } from "../hooks/useAsyncData";
+import { useConfirm } from "../components/ui/Feedback";
 import type {
   CaseRequirement,
+  CaseAssignment,
+  CaseStatus,
   Memorial,
   MemorialVersion,
   TimelineType,
@@ -46,6 +57,12 @@ import {
   statusTone,
   translate,
 } from "../utils/format";
+import {
+  formatCui,
+  formatGuatemalaPhone,
+  isCompleteCui,
+  isCompleteGuatemalaPhone,
+} from "../utils/inputMasks";
 
 const timelineIcons: Record<TimelineType, typeof History> = {
   CaseOpened: FolderKanban,
@@ -69,19 +86,21 @@ const localNow = () => {
 
 export function CaseDetailPage() {
   const { user } = useAuth();
-  const canWrite = Boolean(
-    user?.permissions.includes("*") ||
-      user?.permissions.some((permission) =>
-        ["cases.write", "cases.assign", "cases.timeline.write"].includes(
-          permission,
-        ),
-      ),
+  const confirm = useConfirm();
+  const navigate = useNavigate();
+  const hasPermission = (permission: string) => Boolean(
+    user?.permissions.includes("*") || user?.permissions.includes(permission),
   );
+  const canEditCase = hasPermission("cases.write");
+  const canAssign = hasPermission("cases.assign");
+  const canWriteTimeline = hasPermission("cases.timeline.write");
+  const canDelete = Boolean(user?.permissions.includes("*") || user?.permissions.includes("records.delete"));
   const { id = "" } = useParams();
   const [tab, setTab] = useState("summary");
   const [action, setAction] = useState<
     | "timeline"
     | "assign"
+    | "unassign"
     | "requirement"
     | "counterparty"
     | "memorial"
@@ -90,6 +109,7 @@ export function CaseDetailPage() {
     | "presentation"
     | "notification"
     | "close"
+    | "edit"
     | null
   >(null);
   const [busy, setBusy] = useState(false);
@@ -99,14 +119,15 @@ export function CaseDetailPage() {
     occurredAt: localNow(),
     title: "",
     description: "",
-    newStage: "",
-    newStatus: "",
   });
   const [assignment, setAssignment] = useState({
     studentId: "",
     isPrimary: true,
   });
+  const [assignmentToEnd, setAssignmentToEnd] = useState<CaseAssignment | null>(null);
+  const [unassignReason, setUnassignReason] = useState("");
   const [requirement, setRequirement] = useState<CaseRequirement | null>(null);
+  const [requirementScanOpen, setRequirementScanOpen] = useState(false);
   const [requirementForm, setRequirementForm] = useState({
     status: "Submitted",
     issueDate: "",
@@ -122,6 +143,7 @@ export function CaseDetailPage() {
     workAddress: "",
     notes: "",
   });
+  const [selectedCounterpartyId, setSelectedCounterpartyId] = useState<string | null>(null);
   const [memorial, setMemorial] = useState({
     title: "",
     notes: "",
@@ -150,15 +172,16 @@ export function CaseDetailPage() {
     closedAtUtc: localNow(),
     reason: "",
   });
+  const [editForm, setEditForm] = useState<{ status: CaseStatus; stage: string }>({
+    status: "DocumentCollection",
+    stage: "",
+  });
   const [file, setFile] = useState<File | null>(null);
   const { data, error, loading, reload } = useAsyncData(
     () => dataSource.getCase(id),
     [id],
   );
-  const students = useAsyncData(
-    () => dataSource.listStudents({ pageSize: 100 }),
-    [],
-  );
+  const loadAssignmentCandidates = useCallback(async (term: string) => (await dataSource.listStudentAssignmentCandidates(id, term)).items.map((student) => ({ value: student.id, label: `${student.fullName} · ${student.studentCardNumber}` })), [id]);
 
   const openAction = (value: typeof action) => {
     setFormError(null);
@@ -186,8 +209,8 @@ export function CaseDetailPage() {
         description: timelineForm.description || null,
         performedByStudentId: null,
         documentId,
-        newStage: timelineForm.newStage || null,
-        newStatus: timelineForm.newStatus || null,
+        newStage: null,
+        newStatus: null,
       });
       setAction(null);
       await reload();
@@ -200,6 +223,19 @@ export function CaseDetailPage() {
     } finally {
       setBusy(false);
     }
+  };
+  const saveCase = async () => {
+    if (!data) return;
+    if (!editForm.stage.trim()) { setFormError("La etapa procesal es obligatoria."); return; }
+    setBusy(true);
+    setFormError(null);
+    try {
+      await dataSource.updateCase(id, { ...editForm, stage: editForm.stage.trim(), concurrencyToken: data.summary.concurrencyToken });
+      setAction(null);
+      await reload();
+    } catch (caught) {
+      setFormError(caught instanceof Error ? caught.message : "No se pudo actualizar el expediente.");
+    } finally { setBusy(false); }
   };
   const saveAssignment = async () => {
     if (!assignment.studentId) return;
@@ -223,25 +259,28 @@ export function CaseDetailPage() {
       setBusy(false);
     }
   };
+  const endAssignment = async () => {
+    if (!assignmentToEnd || !unassignReason.trim()) return;
+    setBusy(true);
+    setFormError(null);
+    try {
+      await dataSource.endAssignment(id, assignmentToEnd.id, unassignReason.trim());
+      setAction(null);
+      setAssignmentToEnd(null);
+      setUnassignReason("");
+      await reload();
+    } catch (caught) {
+      setFormError(caught instanceof Error ? caught.message : "No se pudo desasignar al alumno.");
+    } finally { setBusy(false); }
+  };
   const saveRequirement = async () => {
     if (!requirement) return;
     setBusy(true);
     setFormError(null);
     try {
-      let documentId = requirement.documentId;
-      if (file)
-        documentId = (
-          await dataSource.uploadDocument({
-            file,
-            contextType: "CaseRequirement",
-            contextId: requirement.id,
-            label: requirement.label,
-            replaceDocumentId: requirement.documentId,
-          })
-        ).id;
       await dataSource.updateCaseRequirement(id, requirement.id, {
         status: requirementForm.status,
-        documentId,
+        documentId: requirement.documentId,
         dataValue: requirementForm.dataValue || null,
         conditionMet: requirementForm.conditionMet,
         documentIssueDate: requirementForm.issueDate || null,
@@ -260,24 +299,36 @@ export function CaseDetailPage() {
     }
   };
   const saveCounterparty = async () => {
+    if (counterparty.dpi && !isCompleteCui(counterparty.dpi)) {
+      setFormError("El DPI de la contraparte debe contener los 13 dígitos del CUI.");
+      return;
+    }
+    if (!isCompleteGuatemalaPhone(counterparty.phone)) {
+      setFormError("El teléfono debe contener 8 dígitos o el prefijo +502 seguido de 8 dígitos.");
+      return;
+    }
     setBusy(true);
     setFormError(null);
     try {
-      await dataSource.addCounterparty(id, {
+      const input = {
         ...counterparty,
         dpi: counterparty.dpi || null,
         phone: counterparty.phone || null,
         residenceAddress: counterparty.residenceAddress || null,
         workAddress: counterparty.workAddress || null,
         notes: counterparty.notes || null,
-      });
+      };
+      if (selectedCounterpartyId)
+        await dataSource.updateCounterparty(id, selectedCounterpartyId, input);
+      else
+        await dataSource.addCounterparty(id, input);
       setAction(null);
       await reload();
     } catch (caught) {
       setFormError(
         caught instanceof Error
           ? caught.message
-          : "No se pudo agregar la contraparte.",
+          : "No se pudo guardar la contraparte.",
       );
     } finally {
       setBusy(false);
@@ -482,9 +533,18 @@ export function CaseDetailPage() {
   const accepted = data.requirements.filter(
     (item) => item.status === "Accepted" || item.status === "NotApplicable",
   ).length;
+  const deleteCase = async () => {
+    const approved = await confirm({ title: "Eliminar expediente", message: `${legalCase.caseNumber} dejará de aparecer para secretaría y alumnos. El historial y los documentos se conservarán.`, confirmLabel: "Enviar a Eliminados", tone: "danger" });
+    if (!approved) return;
+    setBusy(true);
+    try {
+      await dataSource.deleteCase(id, "Eliminado desde el expediente");
+      navigate("/expedientes", { replace: true });
+    } finally { setBusy(false); }
+  };
 
   return (
-    <div className={canWrite ? "" : "read-only-view"}>
+    <div>
       <Link className="back-link" to="/expedientes">
         <ArrowLeft size={16} />
         Volver a expedientes
@@ -495,21 +555,23 @@ export function CaseDetailPage() {
         description={`${legalCase.processTypeName} · Abierto ${formatDate(legalCase.openedAtUtc)}`}
         actions={
           <>
-            <Button variant="secondary" onClick={() => openAction("assign")}>
+            {canDelete ? <Button variant="danger" disabled={busy} onClick={deleteCase}><Trash2 size={17} />Eliminar</Button> : null}
+            {canEditCase ? <Button variant="secondary" onClick={() => { setEditForm({ status: legalCase.status, stage: legalCase.stage }); openAction("edit"); }}><Pencil size={17} />Estado y etapa</Button> : null}
+            {canAssign ? <Button variant="secondary" onClick={() => openAction("assign")}>
               <UserPlus size={17} />
               Asignar alumno
-            </Button>
-            <Button
+            </Button> : null}
+            {canWriteTimeline ? <Button
               variant="secondary"
               onClick={() => openAction("notification")}
             >
               <BellRing size={17} />
               Notificación
-            </Button>
-            <Button onClick={() => openAction("timeline")}>
+            </Button> : null}
+            {canWriteTimeline ? <Button onClick={() => openAction("timeline")}>
               <Plus size={17} />
               Registrar paso
-            </Button>
+            </Button> : null}
           </>
         }
       />
@@ -538,7 +600,7 @@ export function CaseDetailPage() {
         <Badge tone={statusTone(legalCase.status)}>
           {translate(legalCase.status)}
         </Badge>
-        <Button
+        {canEditCase ? <Button
           variant="ghost"
           size="sm"
           onClick={() => {
@@ -547,7 +609,7 @@ export function CaseDetailPage() {
           }}
         >
           {legalCase.status === "Closed" ? "Reabrir" : "Cerrar caso"}
-        </Button>
+        </Button> : null}
       </div>
       <DetailTabs
         tabs={[
@@ -635,9 +697,8 @@ export function CaseDetailPage() {
             <SectionHeading title="Equipo asignado" />
             {legalCase.assignments.length ? (
               legalCase.assignments.map((item) => (
-                <Link
+                <div
                   className="assigned-person"
-                  to={`/personas/alumnos/${item.studentId}`}
                   key={item.id}
                 >
                   <Avatar
@@ -646,15 +707,22 @@ export function CaseDetailPage() {
                     size="lg"
                   />
                   <span>
-                    <strong>{item.studentName}</strong>
+                    <Link to={`/personas/alumnos/${item.studentId}`}><strong>{item.studentName}</strong></Link>
                     <small>
                       {item.isPrimary
                         ? "Responsable principal"
-                        : "Alumno de apoyo"}
+                        : "Alumno de apoyo"}{item.status !== "Active" && item.endReason ? ` · ${item.endReason}` : ""}
                     </small>
                   </span>
-                  <Badge tone="success">{translate(item.status)}</Badge>
-                </Link>
+                  <div className="inline-actions">
+                    <Badge tone={item.status === "Active" ? "success" : "neutral"}>{translate(item.status)}</Badge>
+                    {canAssign && item.status === "Active" ? (
+                      <Button variant="ghost" size="sm" onClick={() => { setAssignmentToEnd(item); setUnassignReason(""); openAction("unassign"); }}>
+                        <UserMinus size={15} /> Desasignar
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
               ))
             ) : (
               <p className="muted-copy">Sin alumnos asignados.</p>
@@ -724,7 +792,11 @@ export function CaseDetailPage() {
                 <Badge tone={statusTone(item.status)}>
                   {translate(item.status)}
                 </Badge>
-                <Button
+                {item.documentId ? (
+                  <DocumentLink documentId={item.documentId} label="Abrir" />
+                ) : null}
+                {canEditCase ? <Button variant="ghost" size="sm" onClick={() => { setRequirement(item); setRequirementScanOpen(true); }}><FilePlus2 size={15} /> {item.documentId ? "Reemplazar" : "Adjuntar"}</Button> : null}
+                {canEditCase ? <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => {
@@ -740,7 +812,7 @@ export function CaseDetailPage() {
                   }}
                 >
                   Revisar
-                </Button>
+                </Button> : null}
               </div>
             ))}
           </div>
@@ -752,12 +824,12 @@ export function CaseDetailPage() {
           <SectionHeading
             title="Línea de tiempo procesal"
             description="Todos los pasos con autoría y evidencia"
-            action={
+            action={canWriteTimeline ? (
               <Button size="sm" onClick={() => openAction("timeline")}>
                 <Plus size={15} />
                 Registrar paso
               </Button>
-            }
+            ) : undefined}
           />
           <div className="timeline">
             {[...data.timeline].reverse().map((entry, index) => {
@@ -779,10 +851,10 @@ export function CaseDetailPage() {
                     </div>
                     <h3>{entry.title}</h3>
                     <p>{entry.description}</p>
-                    <small>
-                      {entry.documentId ? "Documento adjunto · " : ""}Usuario
-                      interno identificado
-                    </small>
+                    <small>Actividad registrada</small>
+                    {entry.documentId ? (
+                      <DocumentLink documentId={entry.documentId} label="Ver evidencia" />
+                    ) : null}
                   </div>
                 </div>
               );
@@ -796,12 +868,12 @@ export function CaseDetailPage() {
           <SectionHeading
             title="Memoriales y revisiones"
             description="Versiones, observaciones y presentación conservadas"
-            action={
+            action={canWriteTimeline ? (
               <Button size="sm" onClick={() => openAction("memorial")}>
                 <Plus size={15} />
                 Nuevo memorial
               </Button>
-            }
+            ) : undefined}
           />
           {data.memorials.length ? (
             <div className="memorial-list">
@@ -818,7 +890,7 @@ export function CaseDetailPage() {
                     <Badge tone={statusTone(item.status)}>
                       {translate(item.status)}
                     </Badge>
-                    <div className="inline-actions">
+                    {canWriteTimeline ? <div className="inline-actions">
                       <Button
                         variant="secondary"
                         size="sm"
@@ -851,17 +923,19 @@ export function CaseDetailPage() {
                       >
                         Presentar
                       </Button>
-                    </div>
+                    </div> : null}
                   </div>
-                  {item.versions.map((version) => (
+                  {item.versions.map((version, versionIndex) => (
                     <div className="memorial-version" key={version.id}>
                       <div>
                         <strong>Versión {version.versionNumber}</strong>
                         <small>{version.notes}</small>
+                        <DocumentLink documentId={version.documentId} label="Ver versión" />
                       </div>
-                      <Button
+                      {canWriteTimeline ? <Button
                         variant="secondary"
                         size="sm"
+                        disabled={versionIndex !== item.versions.length - 1}
                         onClick={() => {
                           setSelectedMemorial(item);
                           setSelectedVersion(version);
@@ -874,7 +948,7 @@ export function CaseDetailPage() {
                         }}
                       >
                         Revisar
-                      </Button>
+                      </Button> : null}
                       {version.reviews.map((review) => (
                         <div className="review-note" key={review.id}>
                           <Gavel size={17} />
@@ -885,6 +959,9 @@ export function CaseDetailPage() {
                                 : "Requiere cambios"}
                             </strong>
                             <p>{review.observations}</p>
+                            {review.reviewedDocumentId ? (
+                              <DocumentLink documentId={review.reviewedDocumentId} label="Ver revisión" />
+                            ) : null}
                           </span>
                         </div>
                       ))}
@@ -896,6 +973,53 @@ export function CaseDetailPage() {
           ) : (
             <p className="muted-copy">Sin memoriales registrados.</p>
           )}
+          <SectionHeading
+            title="Presentaciones y constancias"
+            description="Documentos entregados y acuses recuperables"
+          />
+          {data.presentations.length ? (
+            <div className="memorial-list">
+              {data.presentations.map((presentation) => (
+                <div className="review-note" key={presentation.id}>
+                  <Send size={18} />
+                  <span>
+                    <strong>{presentation.memorialTitle}</strong>
+                    <p>{presentation.result} · {formatDateTime(presentation.presentedAtUtc)}</p>
+                    <span className="inline-actions">
+                      {presentation.presentedDocumentId ? (
+                        <DocumentLink documentId={presentation.presentedDocumentId} label="Ver presentado" />
+                      ) : null}
+                      {presentation.receiptDocumentId ? (
+                        <DocumentLink documentId={presentation.receiptDocumentId} label="Ver constancia" />
+                      ) : null}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="muted-copy">Sin presentaciones registradas.</p>
+          )}
+          <SectionHeading
+            title="Notificaciones judiciales"
+            description="Registro formal y documento recibido"
+          />
+          {data.courtNotifications.length ? (
+            <div className="memorial-list">
+              {data.courtNotifications.map((notification) => (
+                <div className="review-note" key={notification.id}>
+                  <BellRing size={18} />
+                  <span>
+                    <strong>{formatDateTime(notification.notifiedAtUtc)}</strong>
+                    <p>{notification.description}</p>
+                    <DocumentLink documentId={notification.documentId} label="Ver notificación" />
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="muted-copy">Sin notificaciones registradas.</p>
+          )}
         </Card>
       )}
 
@@ -904,12 +1028,12 @@ export function CaseDetailPage() {
           <Card>
             <SectionHeading
               title="Alumnos asignados"
-              action={
+              action={canAssign ? (
                 <Button size="sm" onClick={() => openAction("assign")}>
                   <UserPlus size={15} />
                   Asignar
                 </Button>
-              }
+              ) : undefined}
             />
             {legalCase.assignments.map((item) => (
               <Link
@@ -934,16 +1058,20 @@ export function CaseDetailPage() {
           <Card>
             <SectionHeading
               title="Contrapartes"
-              action={
+              action={canEditCase ? (
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => openAction("counterparty")}
+                  onClick={() => {
+                    setSelectedCounterpartyId(null);
+                    setCounterparty({ fullName: "", dpi: "", phone: "", residenceAddress: "", workAddress: "", notes: "" });
+                    openAction("counterparty");
+                  }}
                 >
                   <Plus size={15} />
                   Agregar
                 </Button>
-              }
+              ) : undefined}
             />
             {data.counterparties.map((person) => (
               <div className="counterparty" key={person.id}>
@@ -956,6 +1084,26 @@ export function CaseDetailPage() {
                     {person.phone ?? "Sin teléfono"} · {person.residenceAddress}
                   </small>
                 </span>
+                {canEditCase ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedCounterpartyId(person.id);
+                      setCounterparty({
+                        fullName: person.fullName,
+                        dpi: formatCui(person.dpi ?? ""),
+                        phone: formatGuatemalaPhone(person.phone ?? ""),
+                        residenceAddress: person.residenceAddress ?? "",
+                        workAddress: person.workAddress ?? "",
+                        notes: person.notes ?? "",
+                      });
+                      openAction("counterparty");
+                    }}
+                  >
+                    <Pencil size={15} /> Editar
+                  </Button>
+                ) : null}
               </div>
             ))}
           </Card>
@@ -963,10 +1111,47 @@ export function CaseDetailPage() {
       )}
 
       <Modal
+        size="lg"
+        open={action === "edit"}
+        onClose={() => !busy && setAction(null)}
+        title="Gestión procesal del expediente"
+        description="Actualice únicamente los datos propios de la gestión procesal."
+        footer={
+          <>
+            <Button variant="secondary" disabled={busy} onClick={() => setAction(null)}>Cancelar</Button>
+            <Button disabled={busy || !editForm.stage.trim()} onClick={saveCase}>{busy ? "Guardando…" : "Guardar cambios"}</Button>
+          </>
+        }
+      >
+        <div className="form-grid">
+          <div className="form-section-heading field--wide"><strong>Identificación del expediente</strong><span>Información generada al abrir el proceso; se conserva para mantener su trazabilidad.</span></div>
+          <Field label="Número de expediente"><input value={legalCase.caseNumber} readOnly /></Field>
+          <Field label="Cliente"><input value={legalCase.clientName} readOnly /></Field>
+          <Field label="Tipo de proceso"><input value={legalCase.processTypeName} readOnly /></Field>
+          <Field label="Fecha de apertura"><input value={formatDate(legalCase.openedAtUtc)} readOnly /></Field>
+          <div className="form-section-heading field--wide"><strong>Gestión procesal</strong><span>Estado actual y etapa visible en el seguimiento del expediente.</span></div>
+          <Field label="Estado operativo">
+            <Select value={editForm.status} onChange={(event) => setEditForm((current) => ({ ...current, status: event.target.value as CaseStatus }))}>
+              <option value="DocumentCollection">Recolección documental</option>
+              <option value="Active">Activo</option>
+              <option value="Suspended">Suspendido</option>
+            </Select>
+          </Field>
+          <Field label="Etapa procesal"><input value={editForm.stage} onChange={(event) => setEditForm((current) => ({ ...current, stage: event.target.value }))} maxLength={160} /></Field>
+          <div className="form-section-heading field--wide"><strong>Relaciones del expediente</strong><span>La papelería, las personas, el equipo y la bitácora se administran en sus secciones para conservar su propio historial.</span></div>
+          <Field label="Requisitos documentales"><input value={`${data.requirements.length} registrados`} readOnly /></Field>
+          <Field label="Contrapartes"><input value={`${data.counterparties.length} registradas`} readOnly /></Field>
+          <Field label="Asignaciones activas"><input value={`${legalCase.assignments.filter((item) => item.status === "Active").length}`} readOnly /></Field>
+          <Field label="Movimientos de bitácora"><input value={`${data.timeline.length}`} readOnly /></Field>
+        </div>
+        {formError ? <p className="form-error" role="alert">{formError}</p> : null}
+      </Modal>
+
+      <Modal
         open={action === "timeline"}
         onClose={() => !busy && setAction(null)}
         title="Registrar paso procesal"
-        description="Tipo, fecha, etapa y evidencia."
+        description="Fecha, descripción y evidencia de la actuación."
         footer={
           <>
             <Button
@@ -987,21 +1172,10 @@ export function CaseDetailPage() {
       >
         {formError && <div className="form-error">{formError}</div>}
         <div className="form-grid">
-          <Field label="Tipo">
-            <select
-              value={timelineForm.type}
-              onChange={(event) =>
-                setTimelineForm({ ...timelineForm, type: event.target.value })
-              }
-            >
-              <option value="GeneralAction">Acción general</option>
-              <option value="CourtNotification">Notificación judicial</option>
-              <option value="StatusChange">Cambio de estado</option>
-              <option value="Presentation">Presentación</option>
-            </select>
-          </Field>
-          <DatePickerField
+          <Field label="Tipo"><input value="Actuación general" readOnly /></Field>
+          <AppDatePicker
             label="Fecha y hora"
+            preset="processDate"
             value={timelineForm.occurredAt}
             onChange={(occurredAt) =>
               setTimelineForm({ ...timelineForm, occurredAt })
@@ -1016,33 +1190,6 @@ export function CaseDetailPage() {
                 setTimelineForm({ ...timelineForm, title: event.target.value })
               }
             />
-          </Field>
-          <Field label="Nueva etapa">
-            <input
-              value={timelineForm.newStage}
-              onChange={(event) =>
-                setTimelineForm({
-                  ...timelineForm,
-                  newStage: event.target.value,
-                })
-              }
-            />
-          </Field>
-          <Field label="Nuevo estado">
-            <select
-              value={timelineForm.newStatus}
-              onChange={(event) =>
-                setTimelineForm({
-                  ...timelineForm,
-                  newStatus: event.target.value,
-                })
-              }
-            >
-              <option value="">Sin cambio</option>
-              <option value="DocumentCollection">Recolección</option>
-              <option value="Active">Activo</option>
-              <option value="Suspended">Suspendido</option>
-            </select>
           </Field>
           <Field label="Descripción">
             <textarea
@@ -1063,6 +1210,32 @@ export function CaseDetailPage() {
           />
         </div>
       </Modal>
+
+      <DocumentAcquisition
+        open={requirementScanOpen && !!requirement}
+        onClose={() => setRequirementScanOpen(false)}
+        contexts={requirement ? { CaseRequirement: [{ id: requirement.id, label: requirement.label }] } : undefined}
+        initialForm={{
+          contextType: "CaseRequirement",
+          contextId: requirement?.id ?? "",
+          label: requirement?.label ?? "Documento del requisito",
+          replaceDocumentId: requirement?.documentId ?? "",
+        }}
+        contextLocked
+        onCompleted={async (document) => {
+          if (!requirement) return;
+          await dataSource.updateCaseRequirement(id, requirement.id, feedbackHandled({
+            status: requirement.status === "Pending" ? "Submitted" : requirement.status,
+            documentId: document.id,
+            dataValue: requirement.dataValue,
+            conditionMet: requirement.conditionMet,
+            documentIssueDate: requirement.documentIssueDate,
+            notes: requirement.notes,
+          }));
+          setRequirementScanOpen(false);
+          await reload();
+        }}
+      />
 
       <Modal
         open={action === "assign"}
@@ -1089,23 +1262,9 @@ export function CaseDetailPage() {
       >
         {formError && <div className="form-error">{formError}</div>}
         <div className="form-grid">
-          <Field label="Alumno">
-            <select
-              value={assignment.studentId}
-              onChange={(event) =>
-                setAssignment({ ...assignment, studentId: event.target.value })
-              }
-            >
-              <option value="">Seleccione…</option>
-              {students.data?.items.map((student) => (
-                <option key={student.id} value={student.id}>
-                  {student.fullName} · {student.studentCardNumber}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <RelationLookup label="Alumno" required value={assignment.studentId} onChange={(studentId) => setAssignment({ ...assignment, studentId })} load={loadAssignmentCandidates} emptyLabel="Seleccione un alumno con inscripción aprobada" />
           <Field label="Responsabilidad">
-            <select
+            <Select
               value={String(assignment.isPrimary)}
               onChange={(event) =>
                 setAssignment({
@@ -1116,9 +1275,20 @@ export function CaseDetailPage() {
             >
               <option value="true">Responsable principal</option>
               <option value="false">Alumno de apoyo</option>
-            </select>
+            </Select>
           </Field>
         </div>
+      </Modal>
+
+      <Modal
+        open={action === "unassign"}
+        onClose={() => !busy && setAction(null)}
+        title="Desasignar alumno"
+        description={assignmentToEnd ? `${assignmentToEnd.studentName} dejará de participar activamente en este expediente. El histórico se conservará.` : ""}
+        footer={<><Button variant="secondary" disabled={busy} onClick={() => setAction(null)}>Cancelar</Button><Button disabled={busy || !unassignReason.trim()} onClick={endAssignment}>{busy ? "Guardando…" : "Confirmar desasignación"}</Button></>}
+      >
+        <Field label="Motivo de desasignación"><textarea value={unassignReason} onChange={(event) => setUnassignReason(event.target.value)} maxLength={500} /></Field>
+        {formError ? <p className="form-error" role="alert">{formError}</p> : null}
       </Modal>
 
       <Modal
@@ -1144,7 +1314,7 @@ export function CaseDetailPage() {
         {formError && <div className="form-error">{formError}</div>}
         <div className="form-grid">
           <Field label="Estado">
-            <select
+            <Select
               value={requirementForm.status}
               onChange={(event) =>
                 setRequirementForm({
@@ -1158,10 +1328,11 @@ export function CaseDetailPage() {
               <option value="Accepted">Aceptado</option>
               <option value="Observed">Observado</option>
               <option value="NotApplicable">No aplica</option>
-            </select>
+            </Select>
           </Field>
-          <DatePickerField
+          <AppDatePicker
             label="Fecha de emisión"
+            preset="processDate"
             value={requirementForm.issueDate}
             onChange={(issueDate) =>
               setRequirementForm({ ...requirementForm, issueDate })
@@ -1178,12 +1349,6 @@ export function CaseDetailPage() {
               }
             />
           </Field>
-          <FilePicker
-            label="Documento del requisito"
-            hint="PDF, JPG, PNG o WEBP"
-            file={file}
-            onChange={setFile}
-          />
           <Field label="Notas">
             <textarea
               value={requirementForm.notes}
@@ -1201,7 +1366,7 @@ export function CaseDetailPage() {
       <Modal
         open={action === "counterparty"}
         onClose={() => !busy && setAction(null)}
-        title="Agregar contraparte"
+        title={selectedCounterpartyId ? "Editar contraparte" : "Agregar contraparte"}
         description="Datos de localización asociados exclusivamente a este proceso."
         footer={
           <>
@@ -1212,7 +1377,7 @@ export function CaseDetailPage() {
               disabled={busy || !counterparty.fullName.trim()}
               onClick={saveCounterparty}
             >
-              Agregar
+              {selectedCounterpartyId ? "Guardar cambios" : "Agregar"}
             </Button>
           </>
         }
@@ -1233,16 +1398,22 @@ export function CaseDetailPage() {
           <Field label="DPI">
             <input
               value={counterparty.dpi}
+              inputMode="numeric"
+              maxLength={15}
+              placeholder="0000 00000 0000"
               onChange={(event) =>
-                setCounterparty({ ...counterparty, dpi: event.target.value })
+                setCounterparty({ ...counterparty, dpi: formatCui(event.target.value) })
               }
             />
           </Field>
           <Field label="Teléfono">
             <input
+              type="tel"
+              inputMode="tel"
+              placeholder="0000 0000"
               value={counterparty.phone}
               onChange={(event) =>
-                setCounterparty({ ...counterparty, phone: event.target.value })
+                setCounterparty({ ...counterparty, phone: formatGuatemalaPhone(event.target.value) })
               }
             />
           </Field>
@@ -1298,7 +1469,7 @@ export function CaseDetailPage() {
             />
           </Field>
           <Field label="Alumno que entrega">
-            <select
+            <Select
               value={memorial.submittedByStudentId}
               onChange={(event) =>
                 setMemorial({
@@ -1313,7 +1484,7 @@ export function CaseDetailPage() {
                   {item.studentName}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
           <FilePicker
             label="Archivo del memorial"
@@ -1355,7 +1526,7 @@ export function CaseDetailPage() {
       >
         <div className="form-grid">
           <Field label="Alumno que entrega">
-            <select
+            <Select
               value={memorial.submittedByStudentId}
               onChange={(event) =>
                 setMemorial({
@@ -1370,7 +1541,7 @@ export function CaseDetailPage() {
                   {item.studentName}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
           <FilePicker
             label="Archivo PDF"
@@ -1416,7 +1587,7 @@ export function CaseDetailPage() {
       >
         <div className="form-grid">
           <Field label="Resultado">
-            <select
+            <Select
               value={reviewForm.outcome}
               onChange={(event) =>
                 setReviewForm({ ...reviewForm, outcome: event.target.value })
@@ -1424,7 +1595,7 @@ export function CaseDetailPage() {
             >
               <option value="RequiresChanges">Requiere cambios</option>
               <option value="Approved">Aprobado</option>
-            </select>
+            </Select>
           </Field>
           <Field label="Observaciones">
             <textarea
@@ -1472,8 +1643,9 @@ export function CaseDetailPage() {
         }
       >
         <div className="form-grid">
-          <DatePickerField
+          <AppDatePicker
             label="Fecha y hora"
+            preset="processDate"
             value={presentationForm.presentedAtUtc}
             onChange={(presentedAtUtc) =>
               setPresentationForm({ ...presentationForm, presentedAtUtc })
@@ -1535,8 +1707,9 @@ export function CaseDetailPage() {
         }
       >
         <div className="form-grid">
-          <DatePickerField
+          <AppDatePicker
             label="Fecha y hora"
+            preset="processDate"
             value={notificationForm.notifiedAtUtc}
             onChange={(notifiedAtUtc) =>
               setNotificationForm({ ...notificationForm, notifiedAtUtc })
@@ -1605,8 +1778,9 @@ export function CaseDetailPage() {
       >
         <div className="form-grid">
           {legalCase.status !== "Closed" && (
-            <DatePickerField
+            <AppDatePicker
               label="Fecha y hora"
+              preset="processDate"
               value={closeForm.closedAtUtc}
               onChange={(closedAtUtc) =>
                 setCloseForm({ ...closeForm, closedAtUtc })

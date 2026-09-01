@@ -10,13 +10,14 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { Pagination, RelationLookup } from "../components/domain/Shared";
 import {
   Avatar,
   Badge,
   Button,
   Card,
-  DatePickerField,
+  DateRangePickerField,
   ErrorState,
   Field,
   FilePicker,
@@ -24,15 +25,18 @@ import {
   Modal,
   PageHeader,
   SectionHeading,
+  Select,
 } from "../components/ui";
 import { dataSource } from "../data/dataSource";
 import { useAsyncData } from "../hooks/useAsyncData";
+import { useConfirm, useNotify } from "../components/ui/Feedback";
 import type {
   ProcessType,
   RequirementDefinition,
   UserSummary,
 } from "../types/domain";
 import { formatDate, formatDateTime } from "../utils/format";
+import { toLocalDateOnly } from "../utils/date";
 
 const emptyUserForm = {
   fullName: "",
@@ -41,28 +45,29 @@ const emptyUserForm = {
   password: "",
   roleIds: [] as string[],
   studentId: "",
-  participationStartDate: new Date().toISOString().slice(0, 10),
+  participationStartDate: toLocalDateOnly(),
   participationEndDate: "",
   isActive: true,
 };
 
 export function UsersPage() {
+  const confirm = useConfirm();
+  const notify = useNotify();
+  const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<UserSummary | null>(null);
   const [form, setForm] = useState(emptyUserForm);
   const [photo, setPhoto] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [passwordUser, setPasswordUser] = useState<UserSummary | null>(null);
+  const [newPassword, setNewPassword] = useState("");
   const { data, error, loading, reload } = useAsyncData(
-    () => dataSource.listUsers({ pageSize: 50 }),
-    [],
+    () => dataSource.listUsers({ page, pageSize: 25 }),
+    [page],
   );
   const rolesState = useAsyncData(() => dataSource.listRoles(), []);
-  const studentsState = useAsyncData(
-    () => dataSource.listStudents({ pageSize: 100 }),
-    [],
-  );
+  const loadUnlinkedStudents = useCallback(async (term: string) => (await dataSource.listStudents({ search: term, pageSize: 20 })).items.filter((student) => !student.userAccountId).map((student) => ({ value: student.id, label: `${student.fullName} · ${student.studentCardNumber}` })), []);
   const studentRole = rolesState.data?.find((role) => role.name === "Alumno");
   const isStudentRole = Boolean(
     studentRole && form.roleIds.includes(studentRole.id),
@@ -109,22 +114,28 @@ export function UsersPage() {
         participationEndDate: form.participationEndDate || null,
         roleIds: form.roleIds,
       };
-      const saved = editing
-        ? await dataSource.updateUser(editing.id, common)
-        : await dataSource.createUser({
-            ...common,
-            username: form.username.trim(),
-            password: form.password,
-            studentId: isStudentRole ? form.studentId : null,
-          });
-      if (photo) await dataSource.setUserPhoto(saved.id, photo);
-      setNotice(
-        editing
-          ? "Usuario actualizado correctamente."
-          : "Usuario creado correctamente.",
-      );
+      const wasEditing = Boolean(editing);
+      const reactivating = Boolean(editing && !editing.isActive && form.isActive);
+      await notify.track((async () => {
+        const result = editing
+          ? await dataSource.updateUser(editing.id, common)
+          : await dataSource.createUser({
+              ...common,
+              username: form.username.trim(),
+              password: form.password,
+              studentId: isStudentRole ? form.studentId : null,
+            });
+        if (photo) await dataSource.setUserPhoto(result.id, photo);
+        await reload();
+        return result;
+      })(), {
+        loading: { title: reactivating ? "Reactivando usuario…" : wasEditing ? "Guardando usuario…" : "Creando usuario…" },
+        success: (result) => reactivating
+          ? { title: "Usuario reactivado", message: `El acceso de ${result.fullName} fue habilitado nuevamente.` }
+          : { title: wasEditing ? "Usuario actualizado" : "Usuario creado", message: wasEditing ? `Los datos de ${result.fullName} fueron actualizados.` : `${result.fullName} ya puede acceder al sistema.` },
+        error: { title: wasEditing ? "No se pudo actualizar el usuario" : "No se pudo crear el usuario" },
+      });
       setOpen(false);
-      await reload();
     } catch (caught) {
       setFormError(
         caught instanceof Error
@@ -137,39 +148,27 @@ export function UsersPage() {
   };
 
   const deactivate = async (user: UserSummary) => {
-    if (
-      !window.confirm(
-        `¿Desactivar la cuenta de ${user.fullName}? Su historial se conservará.`,
-      )
-    )
-      return;
+    if (!await confirm({ title: "Desactivar usuario", message: `${user.fullName} no podrá iniciar sesión. Su historial permanecerá disponible.`, confirmLabel: "Desactivar", tone: "danger" })) return;
     try {
       await dataSource.deactivateUser(user.id);
-      setNotice("Usuario desactivado.");
       await reload();
-    } catch (caught) {
-      setNotice(
-        caught instanceof Error ? caught.message : "No se pudo desactivar.",
-      );
-    }
+    } catch { /* El sistema global conserva el error y el registro permanece visible. */ }
   };
 
   const resetPassword = async (user: UserSummary) => {
-    const password = window.prompt(
-      `Nueva contraseña temporal para ${user.username} (mínimo 12 caracteres, mayúscula, minúscula, número y símbolo):`,
-    );
-    if (!password) return;
+    setPasswordUser(user);
+    setNewPassword("");
+  };
+
+  const savePassword = async () => {
+    if (!passwordUser || !newPassword) return;
+    setBusy(true);
     try {
-      await dataSource.resetUserPassword(user.id, password);
-      setNotice(
-        "Contraseña restablecida. Las sesiones anteriores fueron revocadas.",
-      );
-    } catch (caught) {
-      setNotice(
-        caught instanceof Error
-          ? caught.message
-          : "No se pudo restablecer la contraseña.",
-      );
+      await dataSource.resetUserPassword(passwordUser.id, newPassword);
+      setPasswordUser(null);
+    } catch { /* El toast contextual permite corregir sin cerrar el diálogo. */ }
+    finally {
+      setBusy(false);
     }
   };
 
@@ -186,14 +185,6 @@ export function UsersPage() {
           </Button>
         }
       />
-      {notice && (
-        <div className="operation-notice" role="status">
-          <span>{notice}</span>
-          <button type="button" onClick={() => setNotice(null)}>
-            Cerrar
-          </button>
-        </div>
-      )}
       <Card>
         <SectionHeading
           title="Directorio de usuarios"
@@ -204,8 +195,9 @@ export function UsersPage() {
         ) : error ? (
           <ErrorState error={error} retry={reload} />
         ) : (
-          <div className="admin-list">
-            {data?.items.map((user) => (
+          <>
+            <div className="admin-list">
+              {data?.items.map((user) => (
               <article key={user.id}>
                 <Avatar
                   name={user.fullName}
@@ -259,8 +251,10 @@ export function UsersPage() {
                   )}
                 </div>
               </article>
-            ))}
-          </div>
+              ))}
+            </div>
+            {data ? <Pagination page={data.page} totalPages={data.totalPages} totalCount={data.totalCount} onPageChange={setPage} /> : null}
+          </>
         )}
       </Card>
       <Modal
@@ -351,7 +345,7 @@ export function UsersPage() {
             </Field>
           )}
           <Field label="Roles">
-            <select
+            <Select
               multiple
               value={form.roleIds}
               onChange={(event) =>
@@ -371,53 +365,25 @@ export function UsersPage() {
                     {role.name}
                   </option>
                 ))}
-            </select>
+            </Select>
           </Field>
           {!editing && isStudentRole && (
-            <Field label="Alumno vinculado">
-              <select
-                value={form.studentId}
-                onChange={(event) => {
-                  const studentId = event.target.value;
-                  const student = studentsState.data?.items.find(
-                    (item) => item.id === studentId,
-                  );
-                  setForm({
-                    ...form,
-                    studentId,
-                    fullName: student?.fullName ?? form.fullName,
-                    email: student?.email ?? form.email,
-                  });
-                }}
-              >
-                <option value="">Seleccione un alumno sin cuenta…</option>
-                {studentsState.data?.items
-                  .filter((student) => !student.userAccountId)
-                  .map((student) => (
-                    <option key={student.id} value={student.id}>
-                      {student.fullName} · {student.studentCardNumber}
-                    </option>
-                  ))}
-              </select>
-            </Field>
+            <RelationLookup label="Alumno vinculado" required value={form.studentId} load={loadUnlinkedStudents} emptyLabel="Seleccione un alumno sin cuenta" onChange={(studentId) => {
+              setForm((current) => ({ ...current, studentId }));
+              if (studentId) void dataSource.getStudent(studentId).then(({ student }) => setForm((current) => current.studentId === studentId ? { ...current, fullName: student.fullName, email: student.email } : current));
+            }} />
           )}
-          <DatePickerField
-            label="Inicio de participación"
-            value={form.participationStartDate}
-            onChange={(participationStartDate) =>
-              setForm({ ...form, participationStartDate })
-            }
-          />
-          <DatePickerField
-            label="Fin de participación"
-            value={form.participationEndDate}
-            onChange={(participationEndDate) =>
-              setForm({ ...form, participationEndDate })
+          <DateRangePickerField
+            label="Vigencia de participación"
+            startValue={form.participationStartDate}
+            endValue={form.participationEndDate}
+            onChange={(participationStartDate, participationEndDate) =>
+              setForm({ ...form, participationStartDate, participationEndDate })
             }
           />
           {editing && (
             <Field label="Estado">
-              <select
+              <Select
                 value={String(form.isActive)}
                 onChange={(event) =>
                   setForm({ ...form, isActive: event.target.value === "true" })
@@ -425,19 +391,31 @@ export function UsersPage() {
               >
                 <option value="true">Activo</option>
                 <option value="false">Inactivo</option>
-              </select>
+              </Select>
             </Field>
           )}
         </div>
+      </Modal>
+      <Modal
+        open={passwordUser !== null}
+        onClose={() => !busy && setPasswordUser(null)}
+        title="Restablecer contraseña"
+        description={passwordUser ? `Defina una contraseña temporal para ${passwordUser.fullName}.` : undefined}
+        footer={<><Button variant="secondary" disabled={busy} onClick={() => setPasswordUser(null)}>Cancelar</Button><Button disabled={busy || newPassword.length < 12} onClick={savePassword}>{busy ? "Guardando…" : "Restablecer"}</Button></>}
+      >
+        <Field label="Nueva contraseña" hint="Mínimo 12 caracteres, con mayúscula, minúscula, número y símbolo.">
+          <input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+        </Field>
       </Modal>
     </>
   );
 }
 
 export function AuditPage() {
+  const [page, setPage] = useState(1);
   const { data, error, loading, reload } = useAsyncData(
-    () => dataSource.listAudit({ pageSize: 50 }),
-    [],
+    () => dataSource.listAudit({ page, pageSize: 50 }),
+    [page],
   );
   return (
     <>
@@ -456,7 +434,7 @@ export function AuditPage() {
         ) : error ? (
           <ErrorState error={error} retry={reload} />
         ) : (
-          <div className="audit-table">
+          <><div className="audit-table">
             <div className="audit-table__head">
               <span>Fecha y usuario</span>
               <span>Acción</span>
@@ -482,7 +460,7 @@ export function AuditPage() {
                 </span>
               </article>
             ))}
-          </div>
+          </div>{data ? <Pagination page={data.page} totalPages={data.totalPages} totalCount={data.totalCount} onPageChange={setPage} /> : null}</>
         )}
       </Card>
     </>
@@ -491,9 +469,10 @@ export function AuditPage() {
 
 export function RetentionPage() {
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [page, setPage] = useState(1);
   const { data, error, loading, reload } = useAsyncData(
-    () => dataSource.listRetentionCandidates({ pageSize: 50 }),
-    [],
+    () => dataSource.listRetentionCandidates({ page, pageSize: 25 }),
+    [page],
   );
   return (
     <>
@@ -522,7 +501,7 @@ export function RetentionPage() {
         ) : error ? (
           <ErrorState error={error} retry={reload} />
         ) : data?.items.length ? (
-          <div className="admin-list retention-list">
+          <><div className="admin-list retention-list">
             {data.items.map((candidate) => (
               <article key={candidate.caseId}>
                 <span className="admin-list__icon">
@@ -552,7 +531,7 @@ export function RetentionPage() {
                 </Button>
               </article>
             ))}
-          </div>
+          </div><Pagination page={data.page} totalPages={data.totalPages} totalCount={data.totalCount} onPageChange={setPage} /></>
         ) : (
           <p className="muted-copy">
             No hay candidatos para el criterio actual.
@@ -919,7 +898,7 @@ export function CatalogsPage() {
             />
           </Field>
           <Field label="Estado">
-            <select
+            <Select
               value={String(processForm.isActive)}
               onChange={(event) =>
                 setProcessForm({
@@ -930,7 +909,7 @@ export function CatalogsPage() {
             >
               <option value="true">Activo</option>
               <option value="false">Inactivo</option>
-            </select>
+            </Select>
           </Field>
         </div>
         {formError && <p className="form-error">{formError}</p>}
@@ -986,7 +965,7 @@ export function CatalogsPage() {
             />
           </Field>
           <Field label="Tipo">
-            <select
+            <Select
               value={requirementForm.kind}
               onChange={(event) =>
                 setRequirementForm({
@@ -997,10 +976,10 @@ export function CatalogsPage() {
             >
               <option value="Document">Documento</option>
               <option value="Data">Dato</option>
-            </select>
+            </Select>
           </Field>
           <Field label="Naturaleza">
-            <select
+            <Select
               value={requirementForm.documentNature}
               onChange={(event) =>
                 setRequirementForm({
@@ -1015,10 +994,10 @@ export function CatalogsPage() {
               <option value="Photocopy">Fotocopia</option>
               <option value="CertifiedCopy">Copia certificada</option>
               <option value="NotApplicable">No aplica</option>
-            </select>
+            </Select>
           </Field>
           <Field label="Obligatoriedad">
-            <select
+            <Select
               value={String(requirementForm.isRequired)}
               onChange={(event) =>
                 setRequirementForm({
@@ -1029,10 +1008,10 @@ export function CatalogsPage() {
             >
               <option value="true">Obligatorio</option>
               <option value="false">Opcional</option>
-            </select>
+            </Select>
           </Field>
           <Field label="Condicional">
-            <select
+            <Select
               value={String(requirementForm.isConditional)}
               onChange={(event) =>
                 setRequirementForm({
@@ -1043,7 +1022,7 @@ export function CatalogsPage() {
             >
               <option value="false">No</option>
               <option value="true">Sí</option>
-            </select>
+            </Select>
           </Field>
           <Field label="Vigencia máxima (días)">
             <input
@@ -1094,7 +1073,7 @@ export function CatalogsPage() {
             />
           </Field>
           <Field label="Estado">
-            <select
+            <Select
               value={String(requirementForm.isActive)}
               onChange={(event) =>
                 setRequirementForm({
@@ -1105,7 +1084,7 @@ export function CatalogsPage() {
             >
               <option value="true">Activo</option>
               <option value="false">Inactivo</option>
-            </select>
+            </Select>
           </Field>
         </div>
         {formError && <p className="form-error">{formError}</p>}

@@ -1,10 +1,11 @@
 import { CheckCircle2, Eye, Mail, Plus, Printer } from "lucide-react";
 import { useMemo, useState } from "react";
+import { Pagination } from "../components/domain/Shared";
 import {
   Badge,
   Button,
   Card,
-  DatePickerField,
+  DateRangePickerField,
   ErrorState,
   Field,
   LoadingState,
@@ -21,8 +22,9 @@ import {
   statusTone,
   translate,
 } from "../utils/format";
+import { toLocalDateOnly } from "../utils/date";
 
-const isoDate = (date: Date) => date.toISOString().slice(0, 10);
+const isoDate = (date: Date) => toLocalDateOnly(date);
 
 export function ReportsPage() {
   const today = useMemo(() => new Date(), []);
@@ -42,17 +44,17 @@ export function ReportsPage() {
   const [selected, setSelected] = useState<WeeklyReport | null>(null);
   const [start, setStart] = useState(isoDate(monday));
   const [end, setEnd] = useState(isoDate(sunday));
-  const [recipients, setRecipients] = useState("direccion.bufete@umg.edu.gt");
+  const [recipients, setRecipients] = useState("");
   const [subject, setSubject] = useState("Reporte semanal de actividades");
   const [message, setMessage] = useState(
     "Adjunto el reporte semanal de actividades del Bufete Jurídico.",
   );
   const [busy, setBusy] = useState(false);
+  const [page, setPage] = useState(1);
   const [actionError, setActionError] = useState("");
-  const [notice, setNotice] = useState("");
   const { data, error, loading, reload } = useAsyncData(
-    () => dataSource.listReports(),
-    [],
+    () => dataSource.listReports({ page, pageSize: 20 }),
+    [page],
   );
 
   const generate = async () => {
@@ -61,7 +63,6 @@ export function ReportsPage() {
     try {
       await dataSource.generateReport(start, end);
       setGenerateOpen(false);
-      setNotice("Reporte generado como borrador.");
       await reload();
     } catch (reason) {
       setActionError(
@@ -79,7 +80,6 @@ export function ReportsPage() {
     setActionError("");
     try {
       await dataSource.reviewReport(report.id);
-      setNotice("Reporte revisado y habilitado para envío.");
       await reload();
     } catch (reason) {
       setActionError(
@@ -109,7 +109,6 @@ export function ReportsPage() {
     try {
       await dataSource.sendReport(selected.id, addresses, subject, message);
       setSendOpen(false);
-      setNotice("Intento de envío registrado. Revise el estado del reporte.");
       await reload();
     } catch (reason) {
       setActionError(
@@ -155,11 +154,6 @@ export function ReportsPage() {
           </Button>
         }
       />
-      {notice && (
-        <p className="form-notice" role="status">
-          {notice}
-        </p>
-      )}
       {actionError && (
         <p className="form-error" role="alert">
           {actionError}
@@ -175,9 +169,10 @@ export function ReportsPage() {
             <LoadingState />
           ) : error ? (
             <ErrorState error={error} retry={reload} />
-          ) : data?.length ? (
-            <div className="report-list">
-              {data.map((report) => (
+          ) : data?.items.length ? (
+            <>
+              <div className="report-list">
+                {data.items.map((report) => (
                 <article key={report.id}>
                   <span className="report-list__date">
                     <strong>
@@ -243,8 +238,15 @@ export function ReportsPage() {
                     </Button>
                   </div>
                 </article>
-              ))}
-            </div>
+                ))}
+              </div>
+              <Pagination
+                page={data.page}
+                totalPages={data.totalPages}
+                totalCount={data.totalCount}
+                onPageChange={setPage}
+              />
+            </>
           ) : (
             <p className="muted-copy">Todavía no se han generado reportes.</p>
           )}
@@ -322,20 +324,14 @@ export function ReportsPage() {
           </>
         }
       >
-        <div className="form-grid">
-          <DatePickerField
-            label="Fecha inicial"
-            value={start}
-            onChange={setStart}
-            required
-          />
-          <DatePickerField
-            label="Fecha final"
-            value={end}
-            onChange={setEnd}
-            required
-          />
-        </div>
+        <DateRangePickerField
+          label="Período del reporte"
+          startValue={start}
+          endValue={end}
+          onChange={(nextStart, nextEnd) => { setStart(nextStart); setEnd(nextEnd); }}
+          hint="Seleccione el inicio y el final en el mismo calendario."
+          required
+        />
         {actionError && <p className="form-error">{actionError}</p>}
       </Modal>
       <Modal
@@ -365,6 +361,8 @@ export function ReportsPage() {
           className="report-html-preview"
           title="Contenido imprimible del reporte"
           srcDoc={preview?.printableHtml ?? ""}
+          sandbox=""
+          referrerPolicy="no-referrer"
         />
       </Modal>
       <Modal

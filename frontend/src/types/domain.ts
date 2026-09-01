@@ -26,6 +26,19 @@ export interface TokenResponse {
   user: AuthenticatedUser;
 }
 
+export type DeletedRecordType = "Client" | "Student" | "LegalCase";
+
+export interface DeletedRecord {
+  id: Id;
+  type: DeletedRecordType;
+  name: string;
+  reference: string;
+  deletedAtUtc: string;
+  deletedByUserId: Id | null;
+  deletedByName: string | null;
+  reason: string | null;
+}
+
 export type CaseStatus = 'DocumentCollection' | 'Active' | 'Suspended' | 'Closed' | 'Archived';
 export type RequirementStatus = 'Pending' | 'Submitted' | 'Accepted' | 'Observed' | 'Expired' | 'NotApplicable';
 export type EnrollmentStatus = 'Draft' | 'Submitted' | 'Admitted' | 'UnderReview' | 'Observed' | 'Approved' | 'Rejected' | 'Completed';
@@ -52,6 +65,7 @@ export interface CaseAssignment {
   status: 'Active' | 'Completed' | 'Reassigned' | 'Cancelled';
   assignedAtUtc: string;
   endedAtUtc: string | null;
+  endReason: string | null;
 }
 
 export interface CaseSummary {
@@ -67,6 +81,7 @@ export interface CaseSummary {
   closedAtUtc: string | null;
   lastStep: TimelineEntry | null;
   assignments: CaseAssignment[];
+  concurrencyToken: Id;
 }
 
 export interface CaseRequirement {
@@ -119,12 +134,35 @@ export interface Memorial {
   versions: MemorialVersion[];
 }
 
+export interface CasePresentation {
+  id: Id;
+  memorialId: Id;
+  memorialTitle: string;
+  memorialVersionId: Id;
+  presentedAtUtc: string;
+  result: string;
+  presentedDocumentId: Id | null;
+  receiptDocumentId: Id | null;
+  createdByUserId: Id | null;
+}
+
+export interface CourtNotification {
+  id: Id;
+  notifiedAtUtc: string;
+  description: string;
+  documentId: Id;
+  newStage: string | null;
+  createdByUserId: Id | null;
+}
+
 export interface CaseDetail {
   summary: CaseSummary;
   requirements: CaseRequirement[];
   counterparties: Counterparty[];
   timeline: TimelineEntry[];
   memorials: Memorial[];
+  presentations: CasePresentation[];
+  courtNotifications: CourtNotification[];
 }
 
 export interface Client {
@@ -157,6 +195,7 @@ export interface Client {
   signatureDocumentId: Id | null;
   isActive: boolean;
   createdAtUtc: string;
+  concurrencyToken: Id;
 }
 
 export interface IncomeDeclaration {
@@ -214,6 +253,14 @@ export interface Student {
   email: string;
   registrationDate: string;
   isActive: boolean;
+  concurrencyToken: Id;
+}
+
+export interface StudentAssignmentCandidate {
+  id: Id;
+  photoDocumentId: Id | null;
+  fullName: string;
+  studentCardNumber: string;
 }
 
 export interface StudentAccess {
@@ -233,6 +280,7 @@ export interface StudentRequirement {
   id: Id;
   requirementDefinitionId: Id;
   label: string;
+  isRequired?: boolean;
   status: RequirementStatus;
   documentId: Id | null;
   dataValue: string | null;
@@ -269,6 +317,7 @@ export interface StudentProfile {
   student: Student;
   enrollments: Enrollment[];
   cases: Array<{
+    assignmentId: Id;
     caseId: Id;
     caseNumber: string;
     clientName: string;
@@ -276,6 +325,10 @@ export interface StudentProfile {
     status: CaseStatus;
     stage: string;
     isPrimary: boolean;
+    assignmentStatus: CaseAssignment["status"];
+    assignedAtUtc: string;
+    endedAtUtc: string | null;
+    endReason: string | null;
     lastStep: string | null;
     lastStepAtUtc: string | null;
   }>;

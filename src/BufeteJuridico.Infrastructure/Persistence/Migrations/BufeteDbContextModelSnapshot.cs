@@ -21,6 +21,7 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                 .HasAnnotation("ProductVersion", "10.0.11")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
+            NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "pg_trgm");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
             modelBuilder.Entity("BufeteJuridico.Domain.Activities.SecretariatActivity", b =>
@@ -214,6 +215,9 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("MemorialId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid>("MemorialVersionId")
+                        .HasColumnType("uuid");
+
                     b.Property<DateTimeOffset>("PresentedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -235,6 +239,10 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("MemorialId");
+
+                    b.HasIndex("MemorialVersionId");
 
                     b.HasIndex("LegalCaseId", "PresentedAtUtc");
 
@@ -455,6 +463,19 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("CreatedByUserId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTimeOffset?>("DeletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DeletedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("DeletionBatchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DeletionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<DateTimeOffset>("OpenedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -484,6 +505,8 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("CaseNumber")
                         .IsUnique();
+
+                    b.HasIndex("DeletedAtUtc");
 
                     b.HasIndex("ProcessTypeId");
 
@@ -862,6 +885,19 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("CreatedByUserId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTimeOffset?>("DeletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DeletedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("DeletionBatchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DeletionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<string>("Dpi")
                         .HasMaxLength(30)
                         .HasColumnType("character varying(30)");
@@ -944,10 +980,16 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DeletedAtUtc");
+
                     b.HasIndex("Dpi")
                         .IsUnique();
 
-                    b.HasIndex("NormalizedFullName");
+                    b.HasIndex("NormalizedFullName")
+                        .HasFilter("\"DeletedAtUtc\" IS NULL");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("NormalizedFullName"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("NormalizedFullName"), new[] { "gin_trgm_ops" });
 
                     b.HasIndex("ReceptionNumber")
                         .IsUnique();
@@ -1085,6 +1127,9 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("DeletedByUserId")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("DeletionBatchId")
+                        .HasColumnType("uuid");
+
                     b.Property<bool>("IsCurrent")
                         .HasColumnType("boolean");
 
@@ -1133,12 +1178,20 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DeletionBatchId");
+
                     b.HasIndex("PageCount");
+
+                    b.HasIndex("PreviousVersionId");
 
                     b.HasIndex("Sha256");
 
                     b.HasIndex("StorageKey")
                         .IsUnique();
+
+                    b.HasIndex("ContextType", "ContextId", "Label")
+                        .IsUnique()
+                        .HasFilter("\"IsCurrent\" = TRUE AND \"DeletedAtUtc\" IS NULL AND \"ContextType\" = 'CaseRequirement'");
 
                     b.HasIndex("ContextType", "ContextId", "Label", "IsCurrent");
 
@@ -1680,6 +1733,8 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("SecretariatActivityId");
+
                     b.HasIndex("WeeklyReportId", "SecretariatActivityId")
                         .IsUnique();
 
@@ -1861,6 +1916,19 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("CreatedByUserId")
                         .HasColumnType("uuid");
 
+                    b.Property<DateTimeOffset?>("DeletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DeletedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("DeletionBatchId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DeletionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
                     b.Property<string>("Dpi")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -1923,6 +1991,9 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("UserAccountId")
                         .HasColumnType("uuid");
 
+                    b.Property<bool?>("UserAccountWasActiveAtDeletion")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("WorkPhone")
                         .HasColumnType("text");
 
@@ -1931,13 +2002,19 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DeletedAtUtc");
+
                     b.HasIndex("Dpi")
                         .IsUnique();
 
                     b.HasIndex("Email")
                         .IsUnique();
 
-                    b.HasIndex("NormalizedFullName");
+                    b.HasIndex("NormalizedFullName")
+                        .HasFilter("\"DeletedAtUtc\" IS NULL");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("NormalizedFullName"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex("NormalizedFullName"), new[] { "gin_trgm_ops" });
 
                     b.HasIndex("StudentCardNumber")
                         .IsUnique();
@@ -2031,6 +2108,32 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                     b.Navigation("Student");
                 });
 
+            modelBuilder.Entity("BufeteJuridico.Domain.Cases.CasePresentation", b =>
+                {
+                    b.HasOne("BufeteJuridico.Domain.Cases.LegalCase", "LegalCase")
+                        .WithMany()
+                        .HasForeignKey("LegalCaseId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BufeteJuridico.Domain.Cases.Memorial", "Memorial")
+                        .WithMany()
+                        .HasForeignKey("MemorialId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("BufeteJuridico.Domain.Cases.MemorialVersion", "MemorialVersion")
+                        .WithMany()
+                        .HasForeignKey("MemorialVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("LegalCase");
+
+                    b.Navigation("Memorial");
+
+                    b.Navigation("MemorialVersion");
+                });
+
             modelBuilder.Entity("BufeteJuridico.Domain.Cases.CaseRequirement", b =>
                 {
                     b.HasOne("BufeteJuridico.Domain.Cases.LegalCase", "LegalCase")
@@ -2048,6 +2151,17 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                         .WithMany("Counterparties")
                         .HasForeignKey("LegalCaseId")
                         .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("LegalCase");
+                });
+
+            modelBuilder.Entity("BufeteJuridico.Domain.Cases.CourtNotification", b =>
+                {
+                    b.HasOne("BufeteJuridico.Domain.Cases.LegalCase", "LegalCase")
+                        .WithMany()
+                        .HasForeignKey("LegalCaseId")
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.Navigation("LegalCase");
@@ -2137,6 +2251,14 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                     b.Navigation("Client");
                 });
 
+            modelBuilder.Entity("BufeteJuridico.Domain.Documents.DocumentRecord", b =>
+                {
+                    b.HasOne("BufeteJuridico.Domain.Documents.DocumentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PreviousVersionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("BufeteJuridico.Domain.Documents.ScanPage", b =>
                 {
                     b.HasOne("BufeteJuridico.Domain.Documents.ScanSession", "ScanSession")
@@ -2210,6 +2332,12 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("BufeteJuridico.Domain.Reports.ReportActivity", b =>
                 {
+                    b.HasOne("BufeteJuridico.Domain.Activities.SecretariatActivity", null)
+                        .WithMany()
+                        .HasForeignKey("SecretariatActivityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("BufeteJuridico.Domain.Reports.WeeklyReport", "WeeklyReport")
                         .WithMany("Activities")
                         .HasForeignKey("WeeklyReportId")
@@ -2228,6 +2356,14 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Student");
+                });
+
+            modelBuilder.Entity("BufeteJuridico.Domain.Students.Student", b =>
+                {
+                    b.HasOne("BufeteJuridico.Domain.Identity.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserAccountId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("BufeteJuridico.Domain.Students.StudentRequirement", b =>

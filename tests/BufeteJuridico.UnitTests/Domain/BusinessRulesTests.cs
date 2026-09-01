@@ -8,6 +8,8 @@ public sealed class BusinessRulesTests
     [Theory]
     [InlineData(EnrollmentStatus.Draft, EnrollmentStatus.Submitted)]
     [InlineData(EnrollmentStatus.Submitted, EnrollmentStatus.Admitted)]
+    [InlineData(EnrollmentStatus.Submitted, EnrollmentStatus.Approved)]
+    [InlineData(EnrollmentStatus.Admitted, EnrollmentStatus.Approved)]
     [InlineData(EnrollmentStatus.UnderReview, EnrollmentStatus.Approved)]
     [InlineData(EnrollmentStatus.Approved, EnrollmentStatus.Completed)]
     public void Enrollment_allows_expected_transitions(EnrollmentStatus current, EnrollmentStatus next)

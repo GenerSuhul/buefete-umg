@@ -84,12 +84,33 @@ internal static class AuthenticationExtensions
 
         var dbContext = context.HttpContext.RequestServices.GetRequiredService<BufeteDbContext>();
         var user = await dbContext.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == userId, context.HttpContext.RequestAborted);
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var now = DateTimeOffset.UtcNow;
+        var today = DateOnly.FromDateTime(now.UtcDateTime);
         if (user is null ||
             user.SecurityStamp != securityStamp ||
             !UserAccessRules.CanSignIn(user, today))
         {
             context.Fail("La cuenta ya no está habilitada.");
+            return;
         }
+
+        var activeAssignments = await dbContext.UserRoles.AsNoTracking()
+            .Where(item =>
+                item.UserId == userId &&
+                item.Role.IsActive &&
+                (item.ValidFromUtc == null || item.ValidFromUtc <= now) &&
+                (item.ValidUntilUtc == null || item.ValidUntilUtc > now))
+            .Select(item => new
+            {
+                item.Role.Name,
+                Permissions = item.Role.Permissions.Select(link => link.Permission.Code)
+            })
+            .ToListAsync(context.HttpContext.RequestAborted);
+        var activeRoles = activeAssignments.Select(item => item.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var activePermissions = activeAssignments.SelectMany(item => item.Permissions).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var tokenRoles = context.Principal?.FindAll(ClaimTypes.Role).Select(item => item.Value).ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+        var tokenPermissions = context.Principal?.FindAll(ClaimNames.Permission).Select(item => item.Value).ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+        if (!tokenRoles.SetEquals(activeRoles) || !tokenPermissions.SetEquals(activePermissions))
+            context.Fail("Los permisos de la sesión cambiaron. Inicie sesión nuevamente.");
     }
 }

@@ -1,5 +1,7 @@
 # Auditoría técnica integral — 21 de agosto de 2026
 
+> **Corte histórico.** Para el estado vigente consulte [`README.md`](README.md) y [`MATRIZ_TRAZABILIDAD_E2E_2026-08-28.md`](MATRIZ_TRAZABILIDAD_E2E_2026-08-28.md).
+
 ## Resultado ejecutivo
 
 Se revisaron frontend, API, capas de aplicación/dominio/infraestructura,

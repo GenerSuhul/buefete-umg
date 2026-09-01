@@ -32,7 +32,8 @@ internal sealed class DatabaseInitializer(
         Permissions.ActivitiesRead,
         Permissions.ActivitiesWrite,
         Permissions.ReportsGenerate,
-        Permissions.ReportsSend
+        Permissions.ReportsSend,
+        Permissions.RecordsDelete
     ];
 
     private static readonly string[] StudentPermissionCodes =
@@ -281,7 +282,11 @@ internal sealed class DatabaseInitializer(
                 Document("SENTENCIA_CONVENIO", "Certificación original de sentencia o convenio que fijó la pensión", 6),
                 Document("ESTADO_CUENTA", "Estado de cuenta del período reclamado", 7)
             ]),
-            new("CAMBIO_NOMBRE", "Cambio de nombre en vía judicial", "Tipo confirmado; requisitos pendientes de entrega.", [])
+            new("CAMBIO_NOMBRE", "Cambio de nombre en vía judicial", "Requisitos básicos de identificación y respaldo.",
+            [
+                Document("DPI_SOLICITANTE", "Copia del DPI del solicitante", 1, DocumentNature.Copy, subject: "Solicitante"),
+                Document("CERTIFICACION_NACIMIENTO", "Certificación de nacimiento", 2, DocumentNature.Original, subject: "Solicitante")
+            ])
         ];
     }
 

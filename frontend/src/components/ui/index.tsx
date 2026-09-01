@@ -1,28 +1,39 @@
-import { DayPicker } from "@daypicker/react";
+import { DayPicker, type DateRange, type DropdownProps } from "@daypicker/react";
 import { es } from "@daypicker/react/locale";
 import {
   AlertCircle,
   ArrowUpRight,
   CalendarDays,
+  ChevronDown,
   Check,
   CheckCircle2,
+  Download,
+  Eye,
+  ExternalLink,
   FileUp,
   LoaderCircle,
+  Clock3,
   Trash2,
   UploadCloud,
   X,
 } from "lucide-react";
 import {
+  Children,
   useEffect,
   useId,
   useRef,
   useState,
   type ButtonHTMLAttributes,
+  type ChangeEvent,
   type HTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  type SelectHTMLAttributes,
 } from "react";
+import { createPortal } from "react-dom";
 import { dataSource } from "../../data/dataSource";
 import { formatBytes } from "../../utils/format";
+import { motion } from "./motion/motion";
 
 export function Button({
   variant = "primary",
@@ -93,8 +104,28 @@ export function Badge({
   );
 }
 
+const pendingDocumentAccessRequests = new Map<
+  string,
+  ReturnType<typeof dataSource.getDocumentReadAccess>
+>();
+
+function getDocumentReadAccessOnce(documentId: string) {
+  const existing = pendingDocumentAccessRequests.get(documentId);
+  if (existing) return existing;
+
+  const request = dataSource.getDocumentReadAccess(documentId);
+  pendingDocumentAccessRequests.set(documentId, request);
+  const clear = () => {
+    if (pendingDocumentAccessRequests.get(documentId) === request)
+      pendingDocumentAccessRequests.delete(documentId);
+  };
+  request.then(clear, clear);
+  return request;
+}
+
 function useDocumentUrl(documentId: string | null | undefined) {
   const [url, setUrl] = useState<string | null>(null);
+  const [access, setAccess] = useState<{ fileName: string; contentType: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,14 +134,15 @@ function useDocumentUrl(documentId: string | null | undefined) {
     let objectUrl: string | null = null;
     if (!documentId) {
       setUrl(null);
+      setAccess(null);
       setError(null);
       return;
     }
     setLoading(true);
     setError(null);
-    dataSource
-      .getDocumentReadAccess(documentId)
+    getDocumentReadAccessOnce(documentId)
       .then(async (access) => {
+        if (active) setAccess({ fileName: access.fileName, contentType: access.contentType });
         if (access.url) return access.url;
         const blob = await dataSource.downloadDocument(documentId);
         objectUrl = URL.createObjectURL(blob);
@@ -136,7 +168,7 @@ function useDocumentUrl(documentId: string | null | undefined) {
     };
   }, [documentId]);
 
-  return { url, loading, error };
+  return { url, loading, error, access };
 }
 
 export function Avatar({
@@ -273,15 +305,30 @@ export function Modal({
 }) {
   const titleId = useId();
   const descriptionId = useId();
+  const backdropRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLElement>(null);
   const onCloseRef = useRef(onClose);
+  const [present, setPresent] = useState(open);
 
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
 
   useEffect(() => {
-    if (!open) return;
+    if (open) setPresent(true);
+  }, [open]);
+
+  useEffect(() => {
+    if (!present || !backdropRef.current || !modalRef.current) return;
+    const animation = open
+      ? motion.modalEnter(backdropRef.current, modalRef.current)
+      : motion.modalExit(backdropRef.current, modalRef.current);
+    if (!open) void animation.finished.then(() => setPresent(false));
+    return animation.cancel;
+  }, [open, present]);
+
+  useEffect(() => {
+    if (!present) return;
     const previous = document.activeElement as HTMLElement | null;
     const oldOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -315,15 +362,16 @@ export function Modal({
       document.body.style.overflow = oldOverflow;
       previous?.focus();
     };
-  }, [open]);
+  }, [present]);
 
-  if (!open) return null;
+  if (!present) return null;
   return (
     <div
+      ref={backdropRef}
       className="modal-backdrop"
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (open && event.target === event.currentTarget) onClose();
       }}
     >
       <section
@@ -370,6 +418,170 @@ export function Field({
   );
 }
 
+export function Select({
+  children,
+  className = "",
+  popoverClassName = "",
+  value,
+  defaultValue,
+  disabled,
+  onChange,
+  "aria-label": ariaLabel,
+  ...props
+}: SelectHTMLAttributes<HTMLSelectElement> & { popoverClassName?: string }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const selectRef = useRef<HTMLSelectElement>(null);
+  const listId = useId();
+  const [position, setPosition] = useState({ top: 0, left: 0, width: 240 });
+  const options = Children.toArray(children).flatMap((child) => {
+    if (!child || typeof child !== "object" || !("props" in child)) return [];
+    const option = child as { props: { value?: string | number; children?: ReactNode; disabled?: boolean } };
+    const implicitValue =
+      typeof option.props.children === "string" ||
+      typeof option.props.children === "number"
+        ? String(option.props.children)
+        : "";
+    return [{
+      value: option.props.value === undefined
+        ? implicitValue
+        : String(option.props.value),
+      label: option.props.children,
+      disabled: option.props.disabled,
+    }];
+  });
+  const currentValue = String(value ?? defaultValue ?? "");
+  const selected = options.find((option) => option.value === currentValue) ?? options[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node) && !(event.target as Element).closest?.(".select-popover")) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnLayoutChange = () => setOpen(false);
+    window.addEventListener("resize", closeOnLayoutChange);
+    return () => {
+      window.removeEventListener("resize", closeOnLayoutChange);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    document.getElementById(listId)?.querySelector<HTMLButtonElement>('button[aria-selected="true"]')?.focus();
+  }, [listId, open]);
+
+  const toggle = () => {
+    if (disabled) return;
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const width = Math.min(Math.max(rect.width, 220), window.innerWidth - 24);
+      const height = Math.min(290, Math.max(120, window.innerHeight - 24));
+      const preferredTop = rect.bottom + 6 + height <= window.innerHeight - 12
+        ? rect.bottom + 6
+        : rect.top - height - 6;
+      setPosition({
+        top: Math.max(12, Math.min(preferredTop, window.innerHeight - height - 12)),
+        left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+        width,
+      });
+    }
+    setOpen((current) => !current);
+  };
+  const choose = (next: string) => {
+    const element = selectRef.current;
+    if (!element) return;
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set?.call(element, next);
+    const changed = { value: next } as HTMLSelectElement;
+    onChange?.({ target: changed, currentTarget: changed } as ChangeEvent<HTMLSelectElement>);
+    setOpen(false);
+    buttonRef.current?.focus();
+  };
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) toggle();
+    }
+  };
+  const handleListKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const list = event.currentTarget;
+    const items = Array.from(list.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      buttonRef.current?.focus();
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) || items.length === 0) return;
+    event.preventDefault();
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    const nextIndex = event.key === "Home" ? 0
+      : event.key === "End" ? items.length - 1
+        : event.key === "ArrowDown" ? (currentIndex + 1) % items.length
+          : (currentIndex - 1 + items.length) % items.length;
+    items[nextIndex]?.focus();
+  };
+
+  if (props.multiple) {
+    return <select className={`multi-select ${className}`} value={value} defaultValue={defaultValue} disabled={disabled} onChange={onChange} aria-label={ariaLabel} {...props}>{children}</select>;
+  }
+
+  return (
+    <div className={`custom-select ${className}`} ref={rootRef}>
+      <button ref={buttonRef} type="button" className="custom-select__trigger" disabled={disabled} role="combobox" aria-label={ariaLabel} aria-controls={listId} aria-expanded={open} aria-haspopup="listbox" onClick={toggle} onKeyDown={handleKeyDown}>
+        <span>{selected?.label ?? "Seleccione"}</span><ChevronDown size={17} />
+      </button>
+      <select ref={selectRef} className="visually-hidden" value={value} defaultValue={defaultValue} disabled={disabled} onChange={onChange} tabIndex={-1} aria-hidden="true" {...props}>{children}</select>
+      {open ? createPortal(
+        <div id={listId} className={`select-popover ${popoverClassName}`} role="listbox" style={position} onKeyDown={handleListKeyDown}>
+          {options.map((option) => (
+            <button key={option.value} type="button" role="option" aria-selected={option.value === currentValue} disabled={option.disabled} onClick={() => choose(option.value)}>
+              <span>{option.label}</span>{option.value === currentValue ? <Check size={16} /> : null}
+            </button>
+          ))}
+        </div>, document.body) : null}
+    </div>
+  );
+}
+
+function CalendarDropdown({
+  options,
+  value,
+  onChange,
+  "aria-label": ariaLabel,
+}: DropdownProps) {
+  return (
+    <Select
+      aria-label={ariaLabel}
+      className="calendar-caption-select"
+      popoverClassName="calendar-caption-popover"
+      value={value?.toString() ?? ""}
+      onChange={(event) => onChange?.(event)}
+    >
+      {options?.map((option) => (
+        <option
+          key={option.value}
+          value={option.value.toString()}
+          disabled={option.disabled}
+        >
+          {option.label}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
 export interface WizardStepDefinition {
   id: string;
   label: string;
@@ -380,10 +592,12 @@ export function WizardProgress({
   steps,
   currentStep,
   onStepChange,
+  allowDirectNavigation = false,
 }: {
   steps: WizardStepDefinition[];
   currentStep: number;
   onStepChange?: (step: number) => void;
+  allowDirectNavigation?: boolean;
 }) {
   return (
     <nav className="wizard-progress" aria-label="Progreso del formulario">
@@ -399,7 +613,7 @@ export function WizardProgress({
             >
               <button
                 type="button"
-                disabled={!onStepChange || index > currentStep}
+                disabled={!onStepChange || (!allowDirectNavigation && index > currentStep)}
                 onClick={() => onStepChange?.(index)}
               >
                 <span className="wizard-progress__index">
@@ -480,6 +694,16 @@ export function FilePicker({
 }) {
   const id = useId();
   const [dragging, setDragging] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file || (!file.type.startsWith("image/") && file.type !== "application/pdf")) {
+      setPreviewUrl(null);
+      return;
+    }
+    const nextUrl = URL.createObjectURL(file);
+    setPreviewUrl(nextUrl);
+    return () => URL.revokeObjectURL(nextUrl);
+  }, [file]);
   return (
     <div
       className={`file-picker ${file ? "file-picker--selected" : ""} ${dragging ? "file-picker--dragging" : ""}`}
@@ -521,6 +745,9 @@ export function FilePicker({
         capture={capture}
         onChange={(event) => onChange(event.target.files?.[0] ?? null)}
       />
+      {previewUrl ? <div className="file-picker__preview" aria-label={`Vista previa de ${file?.name ?? label}`}>
+        {file?.type.startsWith("image/") ? <img src={previewUrl} alt="" /> : <iframe src={previewUrl} title={`Vista previa de ${file?.name ?? label}`} />}
+      </div> : null}
       {file && (
         <IconButton
           className="file-picker__remove"
@@ -534,13 +761,23 @@ export function FilePicker({
   );
 }
 
-export function DatePickerField({
+export type AppDatePickerPreset =
+  | "birthDate"
+  | "processDate"
+  | "startDate"
+  | "endDate"
+  | "general";
+
+export function AppDatePicker({
   label,
   value,
   onChange,
   hint,
   required = false,
   withTime = false,
+  min,
+  max,
+  preset = "general",
 }: {
   label: string;
   value: string;
@@ -548,28 +785,65 @@ export function DatePickerField({
   hint?: string;
   required?: boolean;
   withTime?: boolean;
+  min?: string;
+  max?: string;
+  preset?: AppDatePickerPreset;
 }) {
   const [open, setOpen] = useState(false);
-  const [popoverAlignment, setPopoverAlignment] = useState<"left" | "right">(
-    "left",
-  );
+  const [popoverPosition, setPopoverPosition] = useState({ top: 0, left: 0, width: 330 });
   const rootRef = useRef<HTMLDivElement>(null);
   const datePart = value.slice(0, 10);
   const timePart = withTime ? value.slice(11, 16) || "09:00" : "";
+  const today = new Date();
+  const todayOnly = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const effectiveMin = min ?? (preset === "birthDate" ? "1900-01-01" : undefined);
+  const effectiveMax = max ?? (preset === "birthDate" ? todayOnly : undefined);
   const selected = /^\d{4}-\d{2}-\d{2}$/.test(datePart)
     ? new Date(`${datePart}T12:00:00`)
     : undefined;
+  const [visibleMonth, setVisibleMonth] = useState(selected ?? new Date());
+  const minDate = effectiveMin && /^\d{4}-\d{2}-\d{2}$/.test(effectiveMin) ? new Date(`${effectiveMin}T12:00:00`) : undefined;
+  const maxDate = effectiveMax && /^\d{4}-\d{2}-\d{2}$/.test(effectiveMax) ? new Date(`${effectiveMax}T12:00:00`) : undefined;
+
+  const positionCalendar = () => {
+    const field = rootRef.current?.getBoundingClientRect();
+    if (!field) return;
+    const modalBody = rootRef.current?.closest<HTMLElement>(".modal__body")
+      ?.getBoundingClientRect();
+    const boundary = modalBody ?? {
+      top: 0,
+      right: window.innerWidth,
+      bottom: window.innerHeight,
+      left: 0,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    };
+    setPopoverPosition(calculateDatePopoverPosition(field, boundary));
+  };
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Element;
+      if (!rootRef.current?.contains(target) && !target.closest?.(".date-picker-popover") && !target.closest?.(".select-popover")) setOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
+  useEffect(() => {
+    if (!open) return;
+    const updateOnLayoutChange = () => positionCalendar();
+    window.addEventListener("resize", updateOnLayoutChange);
+    document.addEventListener("scroll", updateOnLayoutChange, true);
+    return () => {
+      window.removeEventListener("resize", updateOnLayoutChange);
+      document.removeEventListener("scroll", updateOnLayoutChange, true);
+    };
+  }, [open]);
+
   const setDate = (date?: Date) => {
     if (!date) return;
+    if ((minDate && date < minDate) || (maxDate && date > maxDate)) return;
     const nextDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     onChange(withTime ? `${nextDate}T${timePart}` : nextDate);
     setOpen(false);
@@ -580,14 +854,8 @@ export function DatePickerField({
       setOpen(false);
       return;
     }
-    const field = rootRef.current?.getBoundingClientRect();
-    const boundary = rootRef.current
-      ?.closest(".modal__body")
-      ?.getBoundingClientRect();
-    const rightEdge = boundary?.right ?? window.innerWidth - 12;
-    setPopoverAlignment(
-      field && field.left + 330 > rightEdge ? "right" : "left",
-    );
+    positionCalendar();
+    setVisibleMonth(selected ?? new Date());
     setOpen(true);
   };
 
@@ -629,21 +897,259 @@ export function DatePickerField({
         </div>
       )}
       {hint && <small>{hint}</small>}
-      {open && (
-        <div
-          className={`date-picker-popover date-picker-popover--${popoverAlignment}`}
-        >
+      {open && createPortal(
+        <div className="date-picker-popover date-picker-popover--single" role="dialog" aria-label={`Seleccionar ${label}`} style={popoverPosition} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setOpen(false); } }}>
           <DayPicker
             mode="single"
             locale={es}
             selected={selected}
             onSelect={setDate}
+            month={visibleMonth}
+            onMonthChange={setVisibleMonth}
             captionLayout="dropdown"
-            startMonth={new Date(2000, 0)}
-            endMonth={new Date(2040, 11)}
+            components={{ Dropdown: CalendarDropdown }}
+            navLayout="after"
+            reverseYears
+            startMonth={minDate ?? new Date(1900, 0, 1)}
+            endMonth={maxDate ?? new Date(today.getFullYear() + 20, 11, 1)}
+            showOutsideDays
+            disabled={[
+              ...(minDate ? [{ before: minDate }] : []),
+              ...(maxDate ? [{ after: maxDate }] : []),
+            ]}
           />
-        </div>
-      )}
+        </div>, document.body)}
+    </div>
+  );
+}
+
+type PositionRect = Pick<DOMRect, "top" | "right" | "bottom" | "left" | "width" | "height">;
+
+export function calculateDatePopoverPosition(
+  field: PositionRect,
+  boundary: PositionRect,
+) {
+  const margin = 12;
+  const gap = 8;
+  const width = Math.max(260, Math.min(330, boundary.width - margin * 2));
+  const estimatedHeight = Math.max(290, Math.min(350, boundary.height - margin * 2));
+  const minLeft = boundary.left + margin;
+  const maxLeft = Math.max(minLeft, boundary.right - width - margin);
+  const minTop = boundary.top + margin;
+  const maxTop = Math.max(minTop, boundary.bottom - estimatedHeight - margin);
+  const clampLeft = (value: number) => Math.max(minLeft, Math.min(value, maxLeft));
+  const clampTop = (value: number) => Math.max(minTop, Math.min(value, maxTop));
+  const centeredTop = clampTop(field.top + field.height / 2 - estimatedHeight / 2);
+
+  if (field.bottom + gap + estimatedHeight <= boundary.bottom - margin)
+    return { top: field.bottom + gap, left: clampLeft(field.left), width };
+  if (field.top - gap - estimatedHeight >= boundary.top + margin)
+    return { top: field.top - gap - estimatedHeight, left: clampLeft(field.left), width };
+  return {
+    top: centeredTop,
+    left: clampLeft(field.left),
+    width,
+  };
+}
+
+const parseDateOnly = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value)
+  ? new Date(`${value}T12:00:00`)
+  : undefined;
+
+const toDateOnly = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+const presentDate = (value: string) => {
+  const date = parseDateOnly(value);
+  return date ? new Intl.DateTimeFormat("es-GT", { day: "2-digit", month: "short", year: "numeric" }).format(date) : "";
+};
+
+export function DateRangePickerField({
+  label,
+  startValue,
+  endValue,
+  onChange,
+  hint,
+  required = false,
+}: {
+  label: string;
+  startValue: string;
+  endValue: string;
+  onChange: (start: string, end: string) => void;
+  hint?: string;
+  required?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<DateRange | undefined>();
+  const [position, setPosition] = useState({ top: 0, left: 0, width: 344 });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const display = startValue && endValue
+    ? `${presentDate(startValue)} — ${presentDate(endValue)}`
+    : startValue ? `Desde ${presentDate(startValue)}` : "Seleccione un rango";
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      const target = event.target as Element;
+      if (!rootRef.current?.contains(target) && !target.closest?.(".date-range-popover")) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnLayoutChange = () => setOpen(false);
+    window.addEventListener("resize", closeOnLayoutChange);
+    document.addEventListener("scroll", closeOnLayoutChange, true);
+    return () => {
+      window.removeEventListener("resize", closeOnLayoutChange);
+      document.removeEventListener("scroll", closeOnLayoutChange, true);
+    };
+  }, [open]);
+
+  const toggle = () => {
+    if (open) return setOpen(false);
+    setDraft({ from: parseDateOnly(startValue), to: parseDateOnly(endValue) });
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (rect) {
+      const width = Math.min(344, window.innerWidth - 24);
+      const height = 455;
+      setPosition({
+        top: window.innerHeight - rect.bottom >= height ? rect.bottom + 8 : Math.max(12, rect.top - height - 8),
+        left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+        width,
+      });
+    }
+    setOpen(true);
+  };
+
+  const apply = () => {
+    if (!draft?.from || !draft.to) return;
+    onChange(toDateOnly(draft.from), toDateOnly(draft.to));
+    setOpen(false);
+  };
+
+  return (
+    <div className="field date-range-field" ref={rootRef}>
+      <span>{label}{required ? " *" : ""}</span>
+      <button type="button" className="date-range-control" aria-expanded={open} onClick={toggle}>
+        <span className={startValue ? "" : "is-placeholder"}>{display}</span>
+        <CalendarDays size={18} />
+      </button>
+      {hint ? <small>{hint}</small> : null}
+      {open ? createPortal(
+        <div className="date-range-popover" role="dialog" aria-label={`Seleccionar ${label}`} style={position} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setOpen(false); } }}>
+          <div className="date-range-popover__heading">
+            <strong>{draft?.from ? presentDate(toDateOnly(draft.from)) : "Fecha inicial"}</strong>
+            <span>—</span>
+            <strong>{draft?.to ? presentDate(toDateOnly(draft.to)) : "Fecha final"}</strong>
+          </div>
+          <DayPicker
+            mode="range"
+            locale={es}
+            selected={draft}
+            onSelect={setDraft}
+            defaultMonth={draft?.from}
+            numberOfMonths={1}
+            showOutsideDays
+          />
+          <div className="date-range-popover__actions">
+            <Button variant="ghost" size="sm" onClick={() => { setDraft(undefined); onChange("", ""); setOpen(false); }}>Limpiar</Button>
+            <Button size="sm" disabled={!draft?.from || !draft.to} onClick={apply}>Aplicar rango</Button>
+          </div>
+        </div>, document.body) : null}
+    </div>
+  );
+}
+
+export function TimePickerField({
+  label,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  hint?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 0, width: 286 });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [hour = "", minute = ""] = value.split(":");
+  const hours = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, "0"));
+  const minutes = Array.from({ length: 12 }, (_, index) => String(index * 5).padStart(2, "0"));
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      const target = event.target as Element;
+      if (!rootRef.current?.contains(target) && !target.closest?.(".time-picker-popover")) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnLayoutChange = () => setOpen(false);
+    window.addEventListener("resize", closeOnLayoutChange);
+    document.addEventListener("scroll", closeOnLayoutChange, true);
+    return () => {
+      window.removeEventListener("resize", closeOnLayoutChange);
+      document.removeEventListener("scroll", closeOnLayoutChange, true);
+    };
+  }, [open]);
+
+  const toggle = () => {
+    if (open) return setOpen(false);
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (rect) {
+      const width = Math.min(286, window.innerWidth - 24);
+      const height = 310;
+      setPosition({
+        top: window.innerHeight - rect.bottom >= height ? rect.bottom + 8 : Math.max(12, rect.top - height - 8),
+        left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+        width,
+      });
+    }
+    setOpen(true);
+  };
+  const chooseHour = (nextHour: string) => onChange(`${nextHour}:${minute || "00"}`);
+  const chooseMinute = (nextMinute: string) => {
+    onChange(`${hour || "08"}:${nextMinute}`);
+    if (hour) setOpen(false);
+  };
+
+  return (
+    <div className="field time-picker-field" ref={rootRef}>
+      <span>{label}</span>
+      <div className="time-picker-control">
+        <input
+          aria-label={label}
+          inputMode="numeric"
+          placeholder="HH:MM"
+          value={value}
+          maxLength={5}
+          onChange={(event) => {
+            const next = event.target.value.replace(/[^0-9:]/g, "").slice(0, 5);
+            onChange(next);
+          }}
+        />
+        <IconButton label={`Seleccionar ${label.toLowerCase()}`} aria-expanded={open} onClick={toggle}>
+          <Clock3 size={18} />
+        </IconButton>
+      </div>
+      {hint ? <small>{hint}</small> : null}
+      {open ? createPortal(
+        <div className="time-picker-popover" role="dialog" aria-label={`Seleccionar ${label}`} style={position} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setOpen(false); } }}>
+          <div className="time-picker-popover__header"><strong>{hour || "--"}</strong><span>:</span><strong>{minute || "--"}</strong></div>
+          <div className="time-picker-popover__columns">
+            <div><span>Hora</span><div className="time-picker-options">{hours.map((item) => <button type="button" className={item === hour ? "is-selected" : ""} key={item} onClick={() => chooseHour(item)}>{item}</button>)}</div></div>
+            <div><span>Minutos</span><div className="time-picker-options">{minutes.map((item) => <button type="button" className={item === minute ? "is-selected" : ""} key={item} onClick={() => chooseMinute(item)}>{item}</button>)}</div></div>
+          </div>
+        </div>, document.body) : null}
     </div>
   );
 }
@@ -661,5 +1167,62 @@ export function FileThumbnail({
     <img className="file-thumbnail" src={url} alt={alt} />
   ) : (
     <FileUp size={28} />
+  );
+}
+
+export function DocumentViewer({
+  documentId,
+  open,
+  onClose,
+  label = "Ver documento",
+  description = "Vista previa del documento",
+  children,
+}: {
+  documentId: string | null;
+  open: boolean;
+  onClose: () => void;
+  label?: string;
+  description?: string;
+  children?: ReactNode;
+}) {
+  const { url, loading, error, access } = useDocumentUrl(open ? documentId : null);
+  const isImage = access?.contentType.startsWith("image/");
+  const isPdf = access?.contentType === "application/pdf";
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      size="xl"
+      title={access?.fileName ?? label}
+      description={description}
+      footer={<><Button variant="secondary" onClick={onClose}>Cerrar</Button>{url ? <a className="button button--secondary button--md" href={url} target="_blank" rel="noreferrer"><ExternalLink size={16} /> Abrir aparte</a> : null}{url ? <a className="button button--primary button--md" href={url} download={access?.fileName}><Download size={16} /> Descargar</a> : null}</>}
+    >
+      <div className="inline-document-preview">
+        {loading ? <LoadingState label="Preparando documento" /> : null}
+        {error ? <p className="form-error" role="alert">{error}</p> : null}
+        {url && isImage ? <img src={url} alt={access?.fileName ?? label} /> : null}
+        {url && isPdf ? <iframe src={url} title={access?.fileName ?? label} /> : null}
+        {url && !isImage && !isPdf ? <div className="empty-state"><FileUp size={30} /><strong>Vista previa no disponible</strong><span>Consulte la metadata y descargue el archivo.</span></div> : null}
+      </div>
+      {children}
+    </Modal>
+  );
+}
+
+export function DocumentLink({
+  documentId,
+  label = "Ver documento",
+}: {
+  documentId: string;
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className="document-link" onClick={() => setOpen(true)}>
+        <Eye size={15} /> {label}
+      </button>
+      <DocumentViewer documentId={documentId} open={open} onClose={() => setOpen(false)} label={label} />
+    </>
   );
 }

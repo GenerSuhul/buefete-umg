@@ -4,8 +4,10 @@ using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using BufeteJuridico.Api.Infrastructure.Auditing;
 using BufeteJuridico.Api.Infrastructure.Authentication;
+using BufeteJuridico.Api.Infrastructure.Configuration;
 using BufeteJuridico.Api.Infrastructure.Errors;
 using BufeteJuridico.Api.Infrastructure.HealthChecks;
+using BufeteJuridico.Api.Infrastructure.OpenApi;
 using BufeteJuridico.Api.Infrastructure.Serialization;
 using BufeteJuridico.Application;
 using BufeteJuridico.Infrastructure;
@@ -13,7 +15,13 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 
+DevelopmentEnvironmentLoader.LoadIfAvailable();
 var builder = WebApplication.CreateBuilder(args);
+var migrationOnly = args.Contains("--migrate", StringComparer.OrdinalIgnoreCase);
+ProductionConfigurationValidator.Validate(
+    builder.Configuration,
+    builder.Environment.IsDevelopment(),
+    migrationOnly);
 builder.WebHost.ConfigureKestrel(options => options.AddServerHeader = false);
 
 builder.Services
@@ -23,7 +31,11 @@ builder.Services
         options.JsonSerializerOptions.Converters.Add(new UtcDateTimeOffsetJsonConverter());
         options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
     });
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
+    options.AddOperationTransformer<BearerSecurityRequirementTransformer>();
+});
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddResponseCompression(options => options.EnableForHttps = true);
@@ -83,7 +95,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 });
 
 var app = builder.Build();
-if (args.Contains("--migrate", StringComparer.OrdinalIgnoreCase))
+if (migrationOnly)
 {
     await app.Services.MigrateAndSeedDatabaseAsync(app.Lifetime.ApplicationStopping);
     return;
@@ -98,11 +110,23 @@ app.Use(async (context, next) =>
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["X-Frame-Options"] = "DENY";
     context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    context.Response.Headers["X-Permitted-Cross-Domain-Policies"] = "none";
+    if (context.Request.Path.StartsWithSegments("/api"))
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers.Pragma = "no-cache";
+    }
     await next(context);
 });
-if (app.Environment.IsDevelopment()) app.MapOpenApi();
-else app.UseHsts();
-app.UseHttpsRedirection();
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
+else
+{
+    app.UseHsts();
+    app.UseHttpsRedirection();
+}
 app.UseCors("Frontend");
 app.UseRateLimiter();
 app.UseAuthentication();

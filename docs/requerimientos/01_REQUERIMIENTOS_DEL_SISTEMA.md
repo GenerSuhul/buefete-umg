@@ -54,12 +54,12 @@ documental y trazabilidad de las personas responsables.
 
 | Actor | Descripción | Capacidades confirmadas | Restricciones o dudas |
 |---|---|---|---|
-| Administrador general | Responsable con control completo | Ejecutar todas las tareas, crear, modificar y eliminar usuarios; consultar trazabilidad | Debe confirmarse si “eliminar” será baja lógica o eliminación física |
-| Secretaría activa | Personal operativo del bufete | Acceso a todas las funciones operativas; registrar clientes, documentos, procesos, seguimientos, alumnos, actividades y reportes | No puede eliminar usuarios |
+| Administrador general | Responsable con control completo | Ejecutar todas las tareas, crear, modificar y dar de baja usuarios; consultar trazabilidad; consultar y restaurar registros eliminados lógicamente | La depuración física continúa sujeta a política institucional |
+| Secretaría activa | Personal operativo del bufete | Acceso a las funciones operativas; registrar, modificar y enviar clientes, alumnos y expedientes a Eliminados | No puede eliminar usuarios, consultar Eliminados ni restaurar registros |
 | Alumno | Persona inscrita y asignada a uno o varios casos | Inicia sesión con su correo, consulta únicamente su perfil y casos asignados, y administra sus datos de cuenta | No puede crear, modificar ni eliminar información jurídica |
 | Cliente | Persona que recibe el servicio jurídico | Sus datos, documentos y procesos se administran en el sistema | No tiene cuenta ni acceso al sistema |
 
-### Matriz preliminar de permisos
+### Matriz vigente de permisos y decisiones pendientes
 
 `Sí` significa confirmado; `No` significa restringido; `PC` significa pendiente
 de confirmación.
@@ -68,17 +68,17 @@ de confirmación.
 |---|:---:|:---:|:---:|
 | Iniciar sesión | Sí | Sí | Sí |
 | Ver clientes y procesos | Sí | Sí | Sí, solo casos asignados |
-| Crear o modificar clientes | Sí | Sí | PC |
-| Cargar papelería de clientes | Sí | Sí | PC |
-| Abrir y actualizar procesos | Sí | Sí | PC |
-| Registrar revisiones, memoriales y notificaciones | Sí | Sí | PC |
-| Registrar alumnos y papelería | Sí | Sí | No/PC |
-| Asignar casos a alumnos | Sí | Sí | No/PC |
+| Crear o modificar clientes | Sí | Sí | No |
+| Cargar papelería de clientes | Sí | Sí | No |
+| Abrir y actualizar procesos | Sí | Sí | No |
+| Registrar revisiones, memoriales y notificaciones | Sí | Sí | No |
+| Registrar alumnos y papelería | Sí | Sí | No |
+| Asignar casos a alumnos | Sí | Sí | No |
 | Registrar actividades de secretaría | Sí | Sí | No |
-| Generar, imprimir y enviar reportes | Sí | Sí | No/PC |
+| Generar, imprimir y enviar reportes | Sí | Sí | No |
 | Crear y modificar usuarios internos | Sí | No | No |
 | Eliminar usuarios internos | Sí | No | No |
-| Consultar auditoría completa | Sí | PC | No/PC |
+| Consultar auditoría completa | Sí | PC | No |
 | Ejecutar depuración | PC, recomendado | No/PC | No |
 
 ## 4. Requerimientos funcionales
@@ -498,6 +498,22 @@ alcance, si la política institucional permite conservar ese registro.
 > cliente defina el evento inicial del año, qué significa “expediente del
 > alumno”, qué información legal debe conservarse y si la acción puede revertirse.
 
+### RF-ARC — Eliminación lógica operativa
+
+- RF-ARC-01: clientes, alumnos y expedientes se eliminan lógicamente; sus filas y
+  objetos documentales no se destruyen.
+- RF-ARC-02: el registro eliminado deja de aparecer en búsquedas, listados y
+  perfiles ordinarios de todos los roles.
+- RF-ARC-03: una secretaría o administrador puede ejecutar la eliminación lógica,
+  con confirmación y motivo opcional; solo el administrador consulta `Eliminados`
+  y restaura.
+- RF-ARC-04: la acción conserva fecha, usuario responsable, motivo y lote. Al
+  eliminar un cliente también se ocultan sus expedientes y documentos vinculados.
+- RF-ARC-05: restaurar revierte únicamente los registros y documentos del mismo
+  lote; un expediente no puede restaurarse mientras su cliente continúe eliminado.
+- RF-ARC-06: la baja operativa no sustituye la depuración física de RF-DEP, que
+  continúa bloqueada hasta contar con política de retención aprobada.
+
 ## 5. Requerimientos transversales
 
 Estos requisitos se derivan de la operación descrita y deben validarse durante
@@ -559,6 +575,8 @@ conforme el cliente entregue información durante el proyecto.
   meses, sujeto a la fecha de referencia que confirme el cliente.
 - RN-16: debe distinguirse solicitante, cliente, alumno, contraparte y usuario
   interno responsable.
+- RN-17: eliminar clientes, alumnos o expedientes significa enviarlos a
+  `Eliminados`; no equivale a destruirlos físicamente.
 
 ## 7. Dependencias de información del cliente
 

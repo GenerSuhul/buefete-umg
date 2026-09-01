@@ -1,4 +1,5 @@
 using BufeteJuridico.Application.Authorization;
+using BufeteJuridico.Application.Common;
 using BufeteJuridico.Application.Operations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -10,8 +11,11 @@ public sealed class ReportsController(IActivityReportService service) : ApiV1Con
 {
     [HttpGet]
     [Authorize(Policy = Permissions.ReportsGenerate)]
-    public async Task<ActionResult<IReadOnlyList<WeeklyReportDto>>> GetAll(CancellationToken cancellationToken) =>
-        Ok(await service.GetReportsAsync(cancellationToken));
+    public async Task<ActionResult<PagedResult<WeeklyReportDto>>> GetAll(
+        int page = 1,
+        int pageSize = 25,
+        CancellationToken cancellationToken = default) =>
+        Ok(await service.GetReportsAsync(page, pageSize, cancellationToken));
 
     [HttpPost("weekly")]
     [Authorize(Policy = Permissions.ReportsGenerate)]

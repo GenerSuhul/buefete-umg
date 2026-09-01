@@ -1,4 +1,5 @@
 using BufeteJuridico.Application.Common;
+using BufeteJuridico.Domain.Cases;
 using BufeteJuridico.Domain.Students;
 
 namespace BufeteJuridico.Application.Students;
@@ -23,7 +24,14 @@ public sealed record StudentDto(
     string? HomePhone,
     string Email,
     DateOnly RegistrationDate,
-    bool IsActive);
+    bool IsActive,
+    Guid ConcurrencyToken);
+
+public sealed record StudentAssignmentCandidateDto(
+    Guid Id,
+    Guid? PhotoDocumentId,
+    string FullName,
+    string StudentCardNumber);
 
 public sealed record SaveStudentRequest(
     string FullName,
@@ -41,7 +49,8 @@ public sealed record SaveStudentRequest(
     string? MobilePhone,
     string? HomePhone,
     string Email,
-    DateOnly RegistrationDate);
+    DateOnly RegistrationDate,
+    Guid? ConcurrencyToken = null);
 
 public sealed record EnrollmentApplicationDto(
     Guid Id,
@@ -71,6 +80,7 @@ public sealed record StudentRequirementDto(
     Guid Id,
     Guid RequirementDefinitionId,
     string Label,
+    bool IsRequired,
     RequirementFulfillmentStatus Status,
     Guid? DocumentId,
     string? DataValue,
@@ -131,6 +141,7 @@ public sealed record UpdateStudentRequirementRequest(
     string? Notes);
 
 public sealed record StudentCaseDto(
+    Guid AssignmentId,
     Guid CaseId,
     string CaseNumber,
     string ClientName,
@@ -138,6 +149,10 @@ public sealed record StudentCaseDto(
     string Status,
     string Stage,
     bool IsPrimary,
+    CaseAssignmentStatus AssignmentStatus,
+    DateTimeOffset AssignedAtUtc,
+    DateTimeOffset? EndedAtUtc,
+    string? EndReason,
     string? LastStep,
     DateTimeOffset? LastStepAtUtc);
 
@@ -151,6 +166,13 @@ public interface IStudentService
     Task<PagedResult<StudentDto>> GetStudentsAsync(string? search, int page, int pageSize, CancellationToken cancellationToken);
 
     Task<StudentDto> GetStudentAsync(Guid id, CancellationToken cancellationToken);
+
+    Task<PagedResult<StudentAssignmentCandidateDto>> GetAssignmentCandidatesAsync(
+        Guid caseId,
+        string? search,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
 
     Task<StudentProfileDto> GetStudentProfileAsync(Guid id, CancellationToken cancellationToken);
 

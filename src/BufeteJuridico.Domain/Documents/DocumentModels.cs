@@ -53,5 +53,7 @@ public sealed class DocumentRecord : AuditableEntity
 
     public DateTimeOffset? DeletedAtUtc { get; set; }
 
+    public Guid? DeletionBatchId { get; set; }
+
     public Guid? DeletedByUserId { get; set; }
 }

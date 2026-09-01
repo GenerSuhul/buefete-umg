@@ -6,8 +6,11 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    pool: "threads",
-    maxWorkers: 1,
+    // Process isolation is slower but avoids intermittent worker deadlocks on
+    // Windows development and CI hosts when jsdom loads the full application.
+    pool: "forks",
+    fileParallelism: false,
+    testTimeout: 10_000,
     setupFiles: ["./src/test/setup.ts"],
   },
   server: {

@@ -31,9 +31,11 @@ public enum RequirementFulfillmentStatus
     NotApplicable = 6
 }
 
-public sealed class Student : AuditableEntity
+public sealed class Student : SoftDeletableEntity
 {
     public Guid? UserAccountId { get; set; }
+
+    public bool? UserAccountWasActiveAtDeletion { get; set; }
 
     public string FullName { get; set; } = string.Empty;
 

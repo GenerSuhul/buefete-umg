@@ -30,6 +30,7 @@ const ids = {
 
 const ana: Client = {
   id: ids.clientAna,
+  concurrencyToken: "a0000000-0000-0000-0000-000000000001",
   receptionNumber: "REC-2026-0042",
   fullName: "Ana Lucía Morales Pérez",
   birthDate: "1991-04-12",
@@ -115,6 +116,7 @@ export const clients: Client[] = [
 export const students: Student[] = [
   {
     id: ids.studentSofia,
+    concurrencyToken: "b0000000-0000-0000-0000-000000000001",
     userAccountId: null,
     fullName: "Sofía Alejandra Castillo Ruiz",
     birthDate: "2002-09-18",
@@ -136,6 +138,7 @@ export const students: Student[] = [
   },
   {
     id: ids.studentDiego,
+    concurrencyToken: "b0000000-0000-0000-0000-000000000002",
     userAccountId: null,
     fullName: "Diego Armando Pérez Molina",
     birthDate: "2001-11-05",
@@ -157,6 +160,7 @@ export const students: Student[] = [
   },
   {
     id: ids.studentCamila,
+    concurrencyToken: "b0000000-0000-0000-0000-000000000003",
     userAccountId: null,
     fullName: "Camila Fernanda Ortiz Mejía",
     birthDate: "2002-02-20",
@@ -224,6 +228,7 @@ const timelineOne = [
 const summaries: CaseSummary[] = [
   {
     id: ids.caseOne,
+    concurrencyToken: "c0000000-0000-0000-0000-000000000001",
     caseNumber: "BJ-2026-0042",
     clientId: ids.clientAna,
     clientName: ana.fullName,
@@ -243,11 +248,13 @@ const summaries: CaseSummary[] = [
         status: "Active",
         assignedAtUtc: "2026-07-29T14:30:00Z",
         endedAtUtc: null,
+        endReason: null,
       },
     ],
   },
   {
     id: ids.caseTwo,
+    concurrencyToken: "c0000000-0000-0000-0000-000000000002",
     caseNumber: "BJ-2026-0038",
     clientId: ids.clientLuis,
     clientName: clients[1].fullName,
@@ -273,11 +280,13 @@ const summaries: CaseSummary[] = [
         status: "Active",
         assignedAtUtc: "2026-07-22T14:30:00Z",
         endedAtUtc: null,
+        endReason: null,
       },
     ],
   },
   {
     id: ids.caseThree,
+    concurrencyToken: "c0000000-0000-0000-0000-000000000003",
     caseNumber: "BJ-2026-0031",
     clientId: ids.clientMaria,
     clientName: clients[2].fullName,
@@ -304,11 +313,13 @@ const summaries: CaseSummary[] = [
         status: "Active",
         assignedAtUtc: "2026-07-16T14:30:00Z",
         endedAtUtc: null,
+        endReason: null,
       },
     ],
   },
   {
     id: "30000000-0000-0000-0000-000000000004",
+    concurrencyToken: "c0000000-0000-0000-0000-000000000004",
     caseNumber: "BJ-2026-0028",
     clientId: clients[3].id,
     clientName: clients[3].fullName,
@@ -432,6 +443,8 @@ export const cases: CaseDetail[] = summaries.map((summary, index) => ({
           },
         ]
       : [],
+  presentations: [],
+  courtNotifications: [],
 }));
 
 export const clientProfiles: ClientProfile[] = clients.map((client) => ({
@@ -557,9 +570,9 @@ export const studentProfiles: StudentProfile[] = students.map(
         clinicCardIssuedDate: index === 1 ? "2026-02-05" : null,
         clinicCardExpirationDate: index === 1 ? "2026-12-15" : null,
         clinicCardDeliveredAtUtc: index === 1 ? "2026-02-06T15:00:00Z" : null,
-        requirements: studentRequirements.map((item) => ({
+        requirements: studentRequirements.map((item, requirementIndex) => ({
           ...item,
-          id: `${item.id.slice(0, -1)}${index + 1}`,
+          id: `d0000000-0000-0000-${String(index + 1).padStart(4, "0")}-${String(requirementIndex + 1).padStart(12, "0")}`,
         })),
       },
     ],
@@ -569,17 +582,25 @@ export const studentProfiles: StudentProfile[] = students.map(
           (assignment) => assignment.studentId === student.id,
         ),
       )
-      .map((item) => ({
-        caseId: item.id,
-        caseNumber: item.caseNumber,
-        clientName: item.clientName,
-        processType: item.processTypeName,
-        status: item.status,
-        stage: item.stage,
-        isPrimary: true,
-        lastStep: item.lastStep?.title ?? null,
-        lastStepAtUtc: item.lastStep?.occurredAtUtc ?? null,
-      })),
+      .map((item) => {
+        const assignment = item.assignments.find((value) => value.studentId === student.id)!;
+        return {
+          assignmentId: assignment.id,
+          caseId: item.id,
+          caseNumber: item.caseNumber,
+          clientName: item.clientName,
+          processType: item.processTypeName,
+          status: item.status,
+          stage: item.stage,
+          isPrimary: assignment.isPrimary,
+          assignmentStatus: assignment.status,
+          assignedAtUtc: assignment.assignedAtUtc,
+          endedAtUtc: assignment.endedAtUtc,
+          endReason: null,
+          lastStep: item.lastStep?.title ?? null,
+          lastStepAtUtc: item.lastStep?.occurredAtUtc ?? null,
+        };
+      }),
   }),
 );
 
@@ -647,6 +668,54 @@ export const documents: DocumentRecord[] = [
     isCurrent: true,
     createdAtUtc: "2026-08-12T18:22:00Z",
     createdByUserId: ids.studentSofia,
+  },
+  {
+    id: "50000000-0000-0000-0000-000000000021",
+    originalFileName: "solicitud_inscripcion_sofia.pdf",
+    contentType: "application/pdf",
+    sizeBytes: 482310,
+    sha256: "mock-sha256-021",
+    source: "Upload",
+    contextType: "Enrollment",
+    contextId: "e0000000-0000-0000-0000-000000000000",
+    label: "Solicitud o memorial de inscripción",
+    versionNumber: 1,
+    previousVersionId: null,
+    isCurrent: true,
+    createdAtUtc: "2026-01-18T15:10:00Z",
+    createdByUserId: ids.secretary,
+  },
+  {
+    id: "50000000-0000-0000-0000-000000000022",
+    originalFileName: "dpi_sofia_herrera.pdf",
+    contentType: "application/pdf",
+    sizeBytes: 816420,
+    sha256: "mock-sha256-022",
+    source: "Scanner",
+    contextType: "Enrollment",
+    contextId: "e0000000-0000-0000-0000-000000000000",
+    label: "Copia de DPI",
+    versionNumber: 1,
+    previousVersionId: null,
+    isCurrent: true,
+    createdAtUtc: "2026-01-18T15:18:00Z",
+    createdByUserId: ids.secretary,
+  },
+  {
+    id: "50000000-0000-0000-0000-000000000023",
+    originalFileName: "curriculum_sofia_herrera.pdf",
+    contentType: "application/pdf",
+    sizeBytes: 625180,
+    sha256: "mock-sha256-023",
+    source: "Upload",
+    contextType: "Enrollment",
+    contextId: "e0000000-0000-0000-0000-000000000000",
+    label: "Currículum vitae",
+    versionNumber: 1,
+    previousVersionId: null,
+    isCurrent: true,
+    createdAtUtc: "2026-01-18T15:24:00Z",
+    createdByUserId: ids.secretary,
   },
   {
     id: "50000000-0000-0000-0000-000000000024",

@@ -24,26 +24,26 @@ import type {
   ScanPageSource,
   ScanSession,
 } from "../../types/domain";
-import { formatBytes, formatDateTime } from "../../utils/format";
-import { Badge, Button, Field, Modal, ReadOnlyValue } from "../ui";
+import { formatBytes, formatDateTime, translate } from "../../utils/format";
+import { Badge, Button, Field, Modal, ReadOnlyValue, Select } from "../ui";
+import { RelationLookup, type LookupOption } from "../domain/Shared";
 
-type BaseContext = "Client" | "Student" | "LegalCase";
+type DocumentContext = DocumentRecord["contextType"];
 type ContextOption = { id: string; label: string };
-type ContextMap = Record<BaseContext, ContextOption[]>;
-
+type ContextMap = Partial<Record<DocumentContext, ContextOption[]>>;
 interface ScanWorkspaceProps {
   open: boolean;
   onClose: () => void;
-  contexts: ContextMap | undefined;
+  contexts?: ContextMap;
+  loadContexts?: (contextType: "Client" | "Student" | "LegalCase", search: string, selectedId?: string) => Promise<LookupOption[]>;
   initialForm: {
-    contextType: BaseContext;
+    contextType: DocumentContext;
     contextId: string;
     label: string;
     replaceDocumentId: string;
   };
   contextLocked?: boolean;
-  versions: DocumentRecord[];
-  onCompleted: () => Promise<void> | void;
+  onCompleted: (document: DocumentRecord) => Promise<void> | void;
 }
 
 function PageImage({
@@ -110,9 +110,9 @@ export function ScanWorkspace({
   open,
   onClose,
   contexts,
+  loadContexts,
   initialForm,
   contextLocked = false,
-  versions,
   onCompleted,
 }: ScanWorkspaceProps) {
   const fileInput = useRef<HTMLInputElement>(null);
@@ -131,10 +131,36 @@ export function ScanWorkspace({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [selectedContextLabel, setSelectedContextLabel] = useState("");
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [draggedPageId, setDraggedPageId] = useState<string | null>(null);
+  const replacementLabels = useRef(new Map<string, string>());
+
+  const loadReplacementDocuments = useCallback(async (term: string) => {
+    if (!form.contextId) return [];
+    const result = await dataSource.listDocuments({
+      contextType: form.contextType,
+      contextId: form.contextId,
+      search: term,
+      pageSize: 20,
+    });
+    result.items.forEach((item) => replacementLabels.current.set(item.id, item.label));
+    const options = result.items.map((item) => ({
+      value: item.id,
+      label: `${item.label} · v${item.versionNumber}`,
+    }));
+    if (!form.replaceDocumentId || options.some((item) => item.value === form.replaceDocumentId))
+      return options;
+    try {
+      const selected = await dataSource.getDocument(form.replaceDocumentId);
+      replacementLabels.current.set(selected.id, selected.label);
+      return [{ value: selected.id, label: `${selected.label} · v${selected.versionNumber}` }, ...options];
+    } catch {
+      return options;
+    }
+  }, [form.contextId, form.contextType, form.replaceDocumentId]);
 
   const activePages = useMemo(
     () =>
@@ -239,8 +265,10 @@ export function ScanWorkspace({
     setBusy(true);
     setError(null);
     setNotice(null);
+    let current = session;
+    let uploadedCount = 0;
     try {
-      let current = await ensureSession(providerName);
+      current = await ensureSession(providerName);
       for (const file of files) {
         const actualSource =
           file.type === "application/pdf" ? "PdfImport" : source;
@@ -248,6 +276,8 @@ export function ScanWorkspace({
           clientPageId: crypto.randomUUID(),
           source: actualSource,
         });
+        uploadedCount += 1;
+        setSession(current);
       }
       setSession(current);
       setSelectedPageId(
@@ -260,10 +290,15 @@ export function ScanWorkspace({
       }
       setNotice(`${files.length} archivo(s) agregado(s).`);
     } catch (caught) {
-      setError(
+      if (current) setSession(current);
+      const detail =
         caught instanceof Error
           ? caught.message
-          : "No se pudieron incorporar las páginas.",
+          : "No se pudieron incorporar las páginas.";
+      setError(
+        uploadedCount > 0
+          ? `Se agregaron ${uploadedCount} de ${files.length} archivo(s). Revise las páginas incorporadas antes de reintentar. ${detail}`
+          : detail,
       );
     } finally {
       setBusy(false);
@@ -275,9 +310,11 @@ export function ScanWorkspace({
     if (!selectedDevice) return;
     setBusy(true);
     setError(null);
+    let activeSession = session;
     try {
       const providerName = `NAPS2-${selectedDevice.driver}`;
       const current = await ensureSession(providerName, selectedDevice);
+      activeSession = current;
       const file = await acquireFromScanner({
         deviceId,
         resolutionDpi,
@@ -296,11 +333,22 @@ export function ScanWorkspace({
         `${updated.pages.length - current.pages.length} página(s) digitalizada(s) con ${selectedDevice.name}.`,
       );
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "La adquisición no pudo completarse.",
-      );
+      const message = caught instanceof Error
+        ? caught.message
+        : "La adquisición no pudo completarse.";
+      if (activeSession) {
+        try {
+          const failed = await dataSource.reportScanFailure(
+            activeSession.id,
+            "AGENT_ACQUISITION_FAILED",
+            message,
+          );
+          setSession(failed);
+        } catch {
+          // El error original es el que debe orientar la recuperación del usuario.
+        }
+      }
+      setError(message);
     } finally {
       setBusy(false);
     }
@@ -357,15 +405,27 @@ export function ScanWorkspace({
     if (!session || !previewUrl) return;
     setBusy(true);
     setError(null);
+    let document: DocumentRecord;
     try {
-      await dataSource.completeScanSession(session.id);
-      await onCompleted();
-      onClose();
+      document = await dataSource.completeScanSession(session.id);
     } catch (caught) {
       setError(
         caught instanceof Error
           ? caught.message
           : "No se pudo confirmar el documento.",
+      );
+      setBusy(false);
+      return;
+    }
+
+    try {
+      await onCompleted(document);
+      onClose();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? `El PDF quedó guardado en Archivo digital, pero no se pudo actualizar la vista relacionada. ${caught.message}`
+          : "El PDF quedó guardado en Archivo digital, pero no se pudo actualizar la vista relacionada.",
       );
     } finally {
       setBusy(false);
@@ -373,14 +433,42 @@ export function ScanWorkspace({
   };
 
   const close = async () => {
-    if (session && activePages.length)
-      await dataSource.saveScanDraft(session.id).catch(() => undefined);
-    onClose();
+    if (!session || !activePages.length) {
+      onClose();
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      setSession(await dataSource.saveScanDraft(session.id));
+      onClose();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? `No se pudo guardar el borrador. Reintente o descarte la sesión. ${caught.message}`
+          : "No se pudo guardar el borrador. Reintente o descarte la sesión.",
+      );
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const selectedContext = contexts?.[form.contextType].find(
-    (item) => item.id === form.contextId,
-  );
+  useEffect(() => {
+    const configured = contexts?.[form.contextType]?.find((item) => item.id === form.contextId)?.label;
+    if (configured) {
+      setSelectedContextLabel(configured);
+      return;
+    }
+    if (!open || !form.contextId || !loadContexts || !["Client", "Student", "LegalCase"].includes(form.contextType)) {
+      setSelectedContextLabel(form.contextId ? "Registro relacionado" : "");
+      return;
+    }
+    let active = true;
+    loadContexts(form.contextType as "Client" | "Student" | "LegalCase", "", form.contextId)
+      .then((items) => { if (active) setSelectedContextLabel(items.find((item) => item.value === form.contextId)?.label ?? "Registro no disponible"); })
+      .catch(() => { if (active) setSelectedContextLabel("Registro no disponible"); });
+    return () => { active = false; };
+  }, [contexts, form.contextId, form.contextType, loadContexts, open]);
   return (
     <Modal
       size="xl"
@@ -451,19 +539,23 @@ export function ScanWorkspace({
                       ? "Cliente"
                       : form.contextType === "Student"
                         ? "Alumno"
-                        : "Expediente"
+                        : form.contextType === "LegalCase"
+                          ? "Expediente"
+                          : form.contextType === "CaseRequirement"
+                            ? "Requisito del expediente"
+                            : "Registro relacionado"
                   }
                 />
               ) : (
                 <Field label="Tipo de registro">
-                  <select
+                  <Select
                     value={form.contextType}
                     onChange={(event) => {
-                      const contextType = event.target.value as BaseContext;
+                      const contextType = event.target.value as DocumentContext;
                       setForm({
                         ...form,
                         contextType,
-                        contextId: contexts?.[contextType][0]?.id ?? "",
+                        contextId: "",
                         replaceDocumentId: "",
                       });
                     }}
@@ -471,32 +563,21 @@ export function ScanWorkspace({
                     <option value="Client">Cliente</option>
                     <option value="Student">Alumno</option>
                     <option value="LegalCase">Expediente</option>
-                  </select>
+                  </Select>
                 </Field>
               )}
               {contextLocked ? (
                 <ReadOnlyValue
                   label="Registro relacionado"
-                  value={selectedContext?.label ?? "Cargando…"}
+                  value={selectedContextLabel || "Cargando…"}
                 />
+              ) : loadContexts ? (
+                <RelationLookup label="Registro relacionado" required value={form.contextId} onChange={(contextId) => setForm({ ...form, contextId, replaceDocumentId: "" })} load={(term) => loadContexts(form.contextType as "Client" | "Student" | "LegalCase", term, form.contextId)} />
               ) : (
                 <Field label="Registro relacionado">
-                  <select
-                    value={form.contextId}
-                    onChange={(event) =>
-                      setForm({
-                        ...form,
-                        contextId: event.target.value,
-                        replaceDocumentId: "",
-                      })
-                    }
-                  >
-                    {contexts?.[form.contextType].map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </select>
+                  <Select value={form.contextId} onChange={(event) => setForm({ ...form, contextId: event.target.value, replaceDocumentId: "" })}>
+                    {contexts?.[form.contextType]?.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                  </Select>
                 </Field>
               )}
               <Field
@@ -511,21 +592,17 @@ export function ScanWorkspace({
                   }
                 />
               </Field>
-              <Field label="Versión">
-                <select
-                  value={form.replaceDocumentId}
-                  onChange={(event) =>
-                    setForm({ ...form, replaceDocumentId: event.target.value })
-                  }
-                >
-                  <option value="">Documento nuevo</option>
-                  {versions.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.label} · v{item.versionNumber}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              <RelationLookup
+                label="Nueva versión de"
+                value={form.replaceDocumentId}
+                onChange={(replaceDocumentId) => setForm((current) => ({
+                  ...current,
+                  replaceDocumentId,
+                  label: replacementLabels.current.get(replaceDocumentId) ?? current.label,
+                }))}
+                load={loadReplacementDocuments}
+                emptyLabel="Documento nuevo"
+              />
             </div>
           </section>
           <section className="scan-form-section">
@@ -540,7 +617,7 @@ export function ScanWorkspace({
             </div>
             <div className="form-grid">
               <Field label="Resolución">
-                <select
+                <Select
                   value={resolutionDpi}
                   onChange={(event) =>
                     setResolutionDpi(Number(event.target.value))
@@ -550,10 +627,10 @@ export function ScanWorkspace({
                   <option value="200">200 DPI</option>
                   <option value="300">300 DPI · recomendado</option>
                   <option value="600">600 DPI</option>
-                </select>
+                </Select>
               </Field>
               <Field label="Color">
-                <select
+                <Select
                   value={colorMode}
                   onChange={(event) =>
                     setColorMode(event.target.value as typeof colorMode)
@@ -562,7 +639,7 @@ export function ScanWorkspace({
                   <option value="Color">Color</option>
                   <option value="Grayscale">Escala de grises</option>
                   <option value="BlackAndWhite">Blanco y negro</option>
-                </select>
+                </Select>
               </Field>
             </div>
             <div className="scan-choice-row">
@@ -592,7 +669,7 @@ export function ScanWorkspace({
             {agentReady && devices.length > 0 && (
               <div className="scanner-action">
                 <Field label="Escáner disponible">
-                  <select
+                  <Select
                     value={deviceId}
                     onChange={(event) => setDeviceId(event.target.value)}
                   >
@@ -601,7 +678,7 @@ export function ScanWorkspace({
                         {device.name} · {device.driver}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
                 <Button
                   disabled={busy || !form.contextId || !form.label.trim()}
@@ -668,7 +745,7 @@ export function ScanWorkspace({
                   onClick={() => {
                     setSession(draft);
                     setForm({
-                      contextType: draft.contextType as BaseContext,
+                      contextType: draft.contextType as DocumentContext,
                       contextId: draft.contextId,
                       label: draft.label,
                       replaceDocumentId: draft.replaceDocumentId ?? "",
@@ -813,11 +890,11 @@ export function ScanWorkspace({
             <h3>{session.label}</h3>
             <ReadOnlyValue
               label="Destino"
-              value={selectedContext?.label ?? session.contextType}
+              value={selectedContextLabel || translate(session.contextType)}
             />
             <ReadOnlyValue
               label="Fuente inicial"
-              value={session.acquisitionProvider}
+              value={translate(session.acquisitionProvider)}
             />
             <ReadOnlyValue
               label="Último guardado"
