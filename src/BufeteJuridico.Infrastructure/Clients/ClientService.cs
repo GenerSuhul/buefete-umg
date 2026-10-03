@@ -5,6 +5,7 @@ using BufeteJuridico.Application.Common;
 using BufeteJuridico.Application.Documents;
 using BufeteJuridico.Domain.Clients;
 using BufeteJuridico.Domain.Documents;
+using BufeteJuridico.Infrastructure.Branding;
 using BufeteJuridico.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,10 +17,12 @@ internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService 
         string? search,
         int page,
         int pageSize,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool? isActive = true)
     {
         (page, pageSize) = ValidatePage(page, pageSize);
-        var query = dbContext.Clients.AsNoTracking().Where(item => item.IsActive);
+        var query = dbContext.Clients.AsNoTracking();
+        if (isActive is bool active) query = query.Where(item => item.IsActive == active);
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -38,6 +41,20 @@ internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService 
             .ToListAsync(cancellationToken);
 
         return new PagedResult<ClientDto>(clients.Select(Map).ToList(), page, pageSize, total);
+    }
+
+    public async Task<ClientDto> SetAttentionAsync(Guid id, SetClientAttentionRequest request, CancellationToken cancellationToken)
+    {
+        if (request.ConcurrencyToken == Guid.Empty)
+            throw new ValidationException("Actualice la ficha antes de cambiar el estado de atención.");
+        var client = await dbContext.Clients.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
+            ?? throw new NotFoundException("No se encontró el usuario atendido.");
+        if (client.ConcurrencyToken != request.ConcurrencyToken)
+            throw new DbUpdateConcurrencyException("La ficha fue modificada por otra persona.");
+        dbContext.Entry(client).Property(item => item.ConcurrencyToken).OriginalValue = request.ConcurrencyToken;
+        client.IsActive = request.IsActive;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return Map(client);
     }
 
     public async Task<ClientDto> GetClientAsync(Guid id, CancellationToken cancellationToken)
@@ -198,7 +215,8 @@ internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService 
             .Append("<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\">")
             .Append("<title>Declaración jurada de ingresos</title>")
             .Append("<style>body{font-family:Arial,sans-serif;max-width:800px;margin:40px auto;line-height:1.6}h1{text-align:center;font-size:20px}.signature{margin-top:80px;border-top:1px solid #000;text-align:center}</style>")
-            .Append("</head><body><h1>DECLARACIÓN JURADA DE INGRESOS</h1>")
+            .Append("</head><body>").Append(InstitutionalReportHeader.Html)
+            .Append("<h1>DECLARACIÓN JURADA DE INGRESOS</h1>")
             .Append("<p>Yo, <strong>").Append(Encode(declaration.FullName)).Append("</strong>, de ")
             .Append(Encode(declaration.DeclaredAge)).Append(" años, estado civil ")
             .Append(Encode(declaration.MaritalStatus)).Append(", identificado(a) con DPI ")

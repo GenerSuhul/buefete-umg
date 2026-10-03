@@ -1,6 +1,6 @@
-# Frontend — Bufete Jurídico UMG
+# Frontend — Bufete Popular UMG
 
-Aplicación React + TypeScript construida sobre los requerimientos, flujos E2E y
+Aplicación Next.js App Router + React + TypeScript construida sobre los requerimientos, flujos E2E y
 contratos de la API v1. El modo normal consume el backend; el adaptador mock se
 carga únicamente cuando una prueba lo solicita de forma explícita.
 
@@ -9,7 +9,7 @@ carga únicamente cuando una prueba lo solicita de forma explícita.
 ```powershell
 cd frontend
 Copy-Item .env.example .env
-npm install
+npm ci
 npm run dev
 ```
 
@@ -20,15 +20,16 @@ Abrir `http://127.0.0.1:5173`.
 En `.env`:
 
 ```dotenv
-VITE_DATA_SOURCE=api
-VITE_API_BASE_URL=http://127.0.0.1:5103/api/v1
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:5103/api/v1
+NEXT_PUBLIC_SCANNER_AGENT_URL=http://127.0.0.1:17654
 ```
 
-La URL debe terminar en `/api/v1`. El cliente HTTP ya envía JWT, renueva la
+La URL debe terminar en `/api/v1`. Son valores públicos incluidos durante
+`npm run build`; no coloque secretos en variables `NEXT_PUBLIC_*`.
+El cliente HTTP ya envía JWT, renueva la
 sesión mediante refresh token y usa JSON o `multipart/form-data` según el
-contrato del backend. Para pruebas aisladas puede utilizarse
-`VITE_DATA_SOURCE=mock`; ese conjunto de datos no se incluye en el bundle de
-producción conectado a la API.
+contrato del backend. El adaptador mock se usa únicamente en pruebas aisladas,
+no como sustituto de la API en producción.
 
 ## Comandos
 

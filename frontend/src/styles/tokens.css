@@ -10,6 +10,9 @@
   --umg-800: #0c365f;
   --umg-900: #01274f;
   --ink-950: #0b1320;
+  --ink-900: #172638;
+  --ink-700: #405065;
+  --ink-400: #8793a3;
   --ink-800: #243142;
   --ink-600: #5f6977;
   --ink-500: #7d8692;
@@ -31,6 +34,6 @@
   --radius-xl: 30px;
   --shadow-soft: 0 10px 32px rgb(7 31 54 / 6%);
   --shadow-float: 0 20px 60px rgb(7 31 54 / 14%);
-  --font-sans: Manrope, Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-sans: "Segoe UI", Manrope, system-ui, -apple-system, sans-serif;
   --transition: 180ms cubic-bezier(.2, .8, .2, 1);
 }

@@ -34,10 +34,8 @@ import type {
 import { hasOperationFeedback, isOperationFeedbackHandled, withOperationFeedback } from "../components/ui/feedback/operationFeedback";
 import { humanizeOperationError } from "../components/ui/feedback/feedbackBus";
 import { readAuthSession, writeAuthSession } from "./authSession";
-const mockMode =
-  import.meta.env.MODE === "test" ||
-  import.meta.env.VITE_DATA_SOURCE === "mock";
-const mockData = mockMode ? await import("./mockDatabase") : null;
+import mockData from "./testFixtures";
+const mockMode = process.env.NODE_ENV === "test";
 const activities = mockData?.activities ?? [];
 const auditLogs = mockData?.auditLogs ?? [];
 const caseSummaries = mockData?.caseSummaries ?? [];
@@ -77,6 +75,7 @@ const addMockDeletedRecord = (
 };
 
 interface ListOptions {
+  isActive?: boolean;
   search?: string;
   page?: number;
   pageSize?: number;
@@ -92,6 +91,7 @@ export interface DataSource {
   getClient(id: string): Promise<ClientProfile>;
   createClient(input: Record<string, unknown>): Promise<Client>;
   updateClient(id: string, input: Record<string, unknown>): Promise<Client>;
+  setClientAttention(id: string, isActive: boolean, concurrencyToken: string): Promise<Client>;
   deleteClient(id: string, reason?: string): Promise<void>;
   createIncomeDeclaration(
     clientId: string,
@@ -317,7 +317,7 @@ export interface PlatformHealth {
   }>;
 }
 
-const delayMs = Number(import.meta.env.VITE_MOCK_DELAY_MS ?? 180);
+const delayMs = 0;
 const wait = () => new Promise((resolve) => setTimeout(resolve, delayMs));
 const clone = <T>(value: T): T => structuredClone(value);
 const mockScanSessions = new Map<string, ScanSession>();
@@ -469,7 +469,7 @@ class MockDataSource implements DataSource {
 
   async listClients(options: ListOptions = {}) {
     await wait();
-    const available = clients.filter((item) => !mockDeleted("Client", item.id));
+    const available = clients.filter((item) => !mockDeleted("Client", item.id) && item.isActive === (options.isActive ?? true));
     const filtered = options.search
       ? available.filter(
           (item) =>
@@ -510,6 +510,11 @@ class MockDataSource implements DataSource {
     Object.assign(client, input);
     client.concurrencyToken = crypto.randomUUID();
     return clone(client);
+  }
+  async setClientAttention(id: string, isActive: boolean, concurrencyToken: string) {
+    const client = clients.find(item => item.id === id);
+    if (!client || client.concurrencyToken !== concurrencyToken) throw new Error("Actualice la ficha antes de guardar.");
+    return this.updateClient(id, { isActive });
   }
   async deleteClient(id: string, reason?: string) {
     await wait();
@@ -1401,11 +1406,11 @@ class MockDataSource implements DataSource {
 }
 
 const baseUrl = (
-  import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:5103/api/v1"
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:5103/api/v1"
 ).replace(/\/$/, "");
 const readinessUrl = new URL(
   "../../health/ready",
-  `${new URL(baseUrl, window.location.origin).toString()}/`,
+  `${new URL(baseUrl, typeof window === "undefined" ? "http://127.0.0.1:5173" : window.location.origin).toString()}/`,
 ).toString();
 
 class ApiClient {
@@ -1578,6 +1583,11 @@ class ApiDataSource implements DataSource {
     return this.api.request<Client>(`/clients/${id}`, {
       method: "PUT",
       body: JSON.stringify(input),
+    });
+  }
+  setClientAttention(id: string, isActive: boolean, concurrencyToken: string) {
+    return this.api.request<Client>(`/clients/${id}/attention`, {
+      method: "PUT", body: JSON.stringify({ isActive, concurrencyToken }),
     });
   }
   deleteClient(id: string, reason?: string) {
@@ -2038,23 +2048,23 @@ class ApiDataSource implements DataSource {
     });
   }
   openScanPage(id: string, pageId: string) {
-    return this.api.requestBlob(`/scan-sessions/${id}/pages/${pageId}/content`);
+    return this.api.requestBlob(`/scan-sessions/${id}/screens/${pageId}/content`);
   }
   reorderScanPages(id: string, pageIds: string[]) {
-    return this.api.request<ScanSession>(`/scan-sessions/${id}/pages/order`, {
+    return this.api.request<ScanSession>(`/scan-sessions/${id}/screens/order`, {
       method: "PUT",
       body: JSON.stringify({ pageIds }),
     });
   }
   rotateScanPage(id: string, pageId: string, rotationDegrees: number) {
     return this.api.request<ScanSession>(
-      `/scan-sessions/${id}/pages/${pageId}/rotation`,
+      `/scan-sessions/${id}/screens/${pageId}/rotation`,
       { method: "PUT", body: JSON.stringify({ rotationDegrees }) },
     );
   }
   removeScanPage(id: string, pageId: string) {
     return this.api.request<ScanSession>(
-      `/scan-sessions/${id}/pages/${pageId}`,
+      `/scan-sessions/${id}/screens/${pageId}`,
       { method: "DELETE" },
     );
   }

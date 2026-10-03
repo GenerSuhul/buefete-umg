@@ -119,9 +119,13 @@ public sealed record ClientProfileDto(
     IReadOnlyList<IncomeDeclarationDto> IncomeDeclarations,
     IReadOnlyList<ClientCaseDto> Cases);
 
+public sealed record SetClientAttentionRequest(bool IsActive, Guid ConcurrencyToken);
+
 public interface IClientService
 {
-    Task<PagedResult<ClientDto>> GetClientsAsync(string? search, int page, int pageSize, CancellationToken cancellationToken);
+    Task<PagedResult<ClientDto>> GetClientsAsync(string? search, int page, int pageSize, CancellationToken cancellationToken, bool? isActive = true);
+
+    Task<ClientDto> SetAttentionAsync(Guid id, SetClientAttentionRequest request, CancellationToken cancellationToken);
 
     Task<ClientDto> GetClientAsync(Guid id, CancellationToken cancellationToken);
 

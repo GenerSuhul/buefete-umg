@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
-import App from './App';
+import App from './test/RouterHarness';
 import { FeedbackProvider } from './components/ui/Feedback';
 import { AuthProvider } from './context/AuthContext';
 
@@ -29,6 +29,7 @@ describe('Bufete Jurídico UMG', () => {
   it('abre un expediente y muestra su último paso trazable', async () => {
     render(<MemoryRouter initialEntries={['/expedientes/30000000-0000-0000-0000-000000000001']}><Providers><App /></Providers></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Ana Lucía Morales Pérez' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Preparación del expediente' })).toBeInTheDocument();
     expect(await screen.findByText('Memorial devuelto con observaciones')).toBeInTheDocument();
   });
 

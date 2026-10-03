@@ -38,7 +38,7 @@ relevantes y almacena los archivos en un bucket privado.
 ## Arquitectura
 
 ```text
-React + TypeScript
+Next.js (App Router) + React + TypeScript
         │ HTTPS / API v1
         ▼
 ASP.NET Core 10
@@ -65,7 +65,7 @@ Domain -> ninguna capa del sistema
 | Ruta | Responsabilidad |
 |---|---|
 | `src/` | API, aplicación, dominio e infraestructura |
-| `frontend/` | aplicación React y contratos de consumo de API |
+| `frontend/` | Next.js App Router, pantallas React y contratos de consumo de API |
 | `tools/` | agente local de adquisición WIA |
 | `tests/` | pruebas unitarias y de integración |
 | `scripts/` | preparación, migraciones, calidad y pruebas E2E |
@@ -90,7 +90,7 @@ En otra terminal:
 ```powershell
 Set-Location frontend
 Copy-Item .env.example .env
-npm install
+npm ci
 npm run dev
 ```
 
@@ -99,6 +99,12 @@ npm run dev
 - OpenAPI en desarrollo: `http://127.0.0.1:5103/openapi/v1.json`
 - PostgreSQL local: `127.0.0.1:55432`
 - Consola MinIO: `http://127.0.0.1:59001`
+
+El frontend usa `NEXT_PUBLIC_API_BASE_URL` y `NEXT_PUBLIC_SCANNER_AGENT_URL`.
+Son direcciones públicas, no secretos, y se incorporan al construir la aplicación.
+Las rutas se definen en `frontend/src/app`; las pantallas de negocio se mantienen
+en `frontend/src/screens`. Para producción: `npm run build` y `npm start`.
+Next.js no reemplaza los controles de autorización de la API .NET.
 
 Los secretos se generan localmente y nunca deben agregarse al repositorio. En
 `Development`, la API carga el `.env` de la raíz como configuración local de
@@ -113,12 +119,45 @@ falta alguno de los valores obligatorios.
 ```powershell
 .\scripts\quality-gate.ps1
 .\scripts\smoke-test.ps1
+dotnet build BufeteJuridico.slnx --configuration Release
 .\scripts\backend-e2e.ps1
 ```
 
 La puerta de calidad verifica formato, compilación sin advertencias, pruebas
 .NET y React, modelo EF Core, dependencias vulnerables, código sin uso y build
 de producción. GitHub Actions ejecuta los mismos controles en cada cambio.
+
+## Imágenes Docker
+
+`Dockerfile.api` publica la API ASP.NET Core y `frontend/Dockerfile` genera el
+servidor Next.js `standalone`. Ambos ejecutan con usuarios sin privilegios,
+incluyen health checks y excluyen secretos del contexto de construcción.
+
+Para comprobarlos **en local**, con `.env` creado según la sección anterior:
+
+```powershell
+docker compose -f compose.yaml -f compose.app.yaml build api web
+docker compose -f compose.yaml -f compose.app.yaml up -d postgres minio minio-init api web
+```
+
+- Web en `http://127.0.0.1:5180/acceso`.
+- API en `http://127.0.0.1:5104/health/ready`.
+- `NEXT_PUBLIC_API_BASE_URL` y la URL del escáner se incorporan al **build** del
+  frontend; para cambiar de dominio hay que reconstruir la imagen web.
+- `compose.app.yaml` es una demostración local: usa `Development` y una sola
+  instancia, y permite migraciones al arrancar. No es un manifiesto de producción
+  ni equivale a alta disponibilidad. Persiste el anillo local de Data Protection
+  en un volumen; en producción debe compartirse y cifrarse mediante un servicio
+  administrado. En producción se aplican migraciones como
+  trabajo independiente, se inyectan secretos y se utiliza proxy HTTPS.
+- El agente WIA del escáner corre en Windows; no forma parte de estas imágenes.
+
+La política de nuevas contraseñas permite entre 8 y 128 caracteres sin exigir
+combinaciones de símbolos, números o mayúsculas. La decisión de admitir ocho
+caracteres sin MFA es institucional y aumenta el riesgo frente a la recomendación
+actual para autenticación de un solo factor; se mantienen el bloqueo por intentos,
+los hashes y la revocación de sesiones existentes. No se alteran las claves ya
+emitidas.
 
 ## Documentación
 
@@ -130,6 +169,7 @@ de producción. GitHub Actions ejecuta los mismos controles en cada cambio.
 - [Integración con escáner](docs/arquitectura/05_INTEGRACION_ESCANER.md)
 - [Producción y alta disponibilidad](docs/arquitectura/09_ARQUITECTURA_PRODUCCION_ALTA_DISPONIBILIDAD.md)
 - [Auditoría integral vigente](docs/auditoria/AUDITORIA_CODIGO_INTEGRAL_2026-09-01.md)
+- [Comparación de productos y diferenciador propuesto](docs/producto/COMPARATIVA_Y_DIFERENCIADOR_2026-10-03.md)
 
 ## Estado
 

@@ -5,6 +5,7 @@ using BufeteJuridico.Application.Common;
 using BufeteJuridico.Application.Operations;
 using BufeteJuridico.Domain.Activities;
 using BufeteJuridico.Domain.Reports;
+using BufeteJuridico.Infrastructure.Branding;
 using BufeteJuridico.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -245,7 +246,8 @@ internal sealed class ActivityReportService(
         var html = new StringBuilder()
             .Append("<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\"><title>Reporte semanal</title>")
             .Append("<style>body{font-family:Arial,sans-serif;margin:30px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #777;padding:8px;text-align:left}th{background:#eee}</style>")
-            .Append("</head><body><h1>Reporte semanal de actividades</h1><p>Período: ")
+            .Append("</head><body>").Append(InstitutionalReportHeader.Html)
+            .Append("<h1>Reporte semanal de actividades</h1><p>Período: ")
             .Append(start).Append(" al ").Append(end)
             .Append("</p><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Descripción</th><th>Responsable</th></tr></thead><tbody>");
         foreach (var activity in activities)

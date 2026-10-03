@@ -120,7 +120,7 @@ function Upload-TestDocument {
     param(
         [string]$Token,
         [Guid]$ContextId,
-        [ValidateSet('LegalCase', 'CaseRequirement', 'Memorial', 'Student', 'UserPhoto')][string]$ContextType = 'LegalCase',
+        [ValidateSet('LegalCase', 'CaseRequirement', 'Memorial', 'Student', 'Enrollment', 'UserPhoto')][string]$ContextType = 'LegalCase',
         [ValidateSet('Pdf', 'Image')][string]$Kind = 'Pdf',
         [string]$Label,
         [Guid]$ReplaceDocumentId = [Guid]::Empty,
@@ -227,6 +227,11 @@ if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyCon
     throw "El puerto $Port ya está ocupado."
 }
 
+& dotnet restore 'src\BufeteJuridico.Api\BufeteJuridico.Api.csproj' --locked-mode
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo restaurar la API para E2E.' }
+& dotnet build 'src\BufeteJuridico.Api\BufeteJuridico.Api.csproj' --configuration Release --no-restore
+if ($LASTEXITCODE -ne 0) { throw 'No se pudo compilar la API para E2E.' }
+
 New-Item -ItemType Directory -Path $artifactDirectory -Force | Out-Null
 
 try {
@@ -248,7 +253,7 @@ try {
     $stderrPath = Join-Path $artifactDirectory 'api.stderr.log'
     $apiProcess = Start-Process `
         -FilePath 'dotnet' `
-        -ArgumentList @('run', '--project', 'src\BufeteJuridico.Api', '--no-build', '--no-launch-profile') `
+        -ArgumentList @('run', '--project', 'src\BufeteJuridico.Api', '--configuration', 'Release', '--no-build', '--no-launch-profile') `
         -WorkingDirectory $repositoryRoot `
         -RedirectStandardOutput $stdoutPath `
         -RedirectStandardError $stderrPath `
@@ -338,6 +343,18 @@ try {
         signatureDocumentId = $null
     }
 
+    $originalClientToken = $client.concurrencyToken
+    $client = Invoke-Api -Method Put -Path "/api/v1/clients/$($client.id)/attention" -Token $adminToken -Body @{ isActive = $false; concurrencyToken = $originalClientToken }
+    $inactiveClient = Invoke-Api -Method Get -Path "/api/v1/clients/$($client.id)" -Token $adminToken
+    if ($inactiveClient.isActive) { throw 'La baja de atención no persistió.' }
+    $activeList = Invoke-Api -Method Get -Path "/api/v1/clients?search=$suffix" -Token $adminToken
+    $inactiveList = Invoke-Api -Method Get -Path "/api/v1/clients?search=$suffix&isActive=false" -Token $adminToken
+    if ($activeList.totalCount -ne 0 -or $inactiveList.totalCount -ne 1) { throw 'El filtro de atención mezcla personas activas e inactivas.' }
+    $null = Invoke-Api -Method Put -Path "/api/v1/clients/$($client.id)/attention" -Token $adminToken -ExpectedStatus 409 -Body @{ isActive = $true; concurrencyToken = $originalClientToken }
+    $null = Invoke-Api -Method Post -Path '/api/v1/cases' -Token $adminToken -ExpectedStatus 404 -Body @{ clientId = $client.id; processTypeId = $processType.id }
+    $client = Invoke-Api -Method Put -Path "/api/v1/clients/$($client.id)/attention" -Token $adminToken -Body @{ isActive = $true; concurrencyToken = $client.concurrencyToken }
+    if (-not $client.isActive) { throw 'La reactivación no persistió.' }
+
     $declaration = Invoke-Api -Method Post -Path "/api/v1/clients/$($client.id)/income-declarations" -Token $adminToken -ExpectedStatus 201 -Body @{
         fullName = $client.fullName
         declaredAge = 36
@@ -393,7 +410,7 @@ try {
     $rollbackSearch = Invoke-Api -Method Get -Path "/api/v1/students?search=$rollbackMarker&page=1&pageSize=10" -Token $adminToken
     if ($rollbackSearch.totalCount -ne 0) { throw 'La inscripción fallida dejó un alumno huérfano.' }
 
-    $studentPassword = "Stu!2026_$suffix"
+    $studentPassword = 'studentx'
     $registration = Invoke-Api -Method Post -Path '/api/v1/students/registration' -Token $adminToken -ExpectedStatus 201 -Body @{
         student = @{
             fullName = "Alumno E2E $suffix"; birthDate = '2000-02-10'; ageAtRegistration = 26
@@ -432,8 +449,18 @@ try {
     $staleStudentUpdateBody.workplace = 'Cambio obsoleto que no debe persistir'
     $null = Invoke-Api -Method Put -Path "/api/v1/students/$($student.id)" -Token $adminToken -ExpectedStatus 409 -Body $staleStudentUpdateBody
     foreach ($studentRequirement in @($enrollment.requirements)) {
+        $requirementDocument = if ($studentRequirement.isConditional) {
+            $null
+        }
+        else {
+            Upload-TestDocument -Token $adminToken -ContextId $enrollment.id -ContextType Enrollment -Label $studentRequirement.label
+        }
         $enrollment = Invoke-Api -Method Put -Path "/api/v1/students/enrollments/$($enrollment.id)/requirements/$($studentRequirement.id)" -Token $adminToken -Body @{
-            status = 'Accepted'; documentId = $null; dataValue = 'Validado E2E'; documentIssueDate = (Get-Date).ToString('yyyy-MM-dd'); notes = 'Cobertura E2E'
+            status = if ($studentRequirement.isConditional) { 'NotApplicable' } else { 'Accepted' }
+            documentId = if ($requirementDocument) { $requirementDocument.id } else { $null }
+            dataValue = $null
+            documentIssueDate = if ($requirementDocument) { (Get-Date).ToString('yyyy-MM-dd') } else { $null }
+            notes = 'Cobertura E2E'
         }
     }
     foreach ($enrollmentStatus in @('Submitted', 'Admitted', 'UnderReview', 'Approved')) {
@@ -520,6 +547,7 @@ try {
     if ($assignedCases.totalCount -ne 1 -or $assignedCases.items[0].id -ne $legalCase.summary.id) { throw 'El alumno pudo consultar casos no asignados o no encontró su caso.' }
     $null = Invoke-Api -Method Get -Path "/api/v1/cases/$($legalCase.summary.id)" -Token $studentToken
     $null = Invoke-Api -Method Get -Path '/api/v1/clients' -Token $studentToken -ExpectedStatus 403
+    $null = Invoke-Api -Method Put -Path "/api/v1/clients/$($client.id)/attention" -Token $studentToken -ExpectedStatus 403 -Body @{ isActive = $false; concurrencyToken = $client.concurrencyToken }
     $null = Invoke-Api -Method Put -Path "/api/v1/students/$($student.id)" -Token $studentToken -ExpectedStatus 403 -Body @{
         fullName = $student.fullName; studentCardNumber = $student.studentCardNumber; dpi = $student.dpi
         residenceAddress = $student.residenceAddress; email = $student.email; registrationDate = $student.registrationDate
@@ -709,6 +737,7 @@ try {
     $reportPrint = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/v1/reports/$($report.id)/print" -Headers @{ Authorization = "Bearer $adminToken" }
     if ([int]$reportPrint.StatusCode -ne 200 -or $reportPrint.Headers['Content-Type'] -notlike 'text/html*') { throw 'El reporte imprimible no está disponible.' }
     if ($reportPrint.Content -notmatch [regex]::Escape($adminProfile.fullName)) { throw 'El reporte imprimible no identifica al responsable por nombre.' }
+    if ($reportPrint.Content -notmatch 'data:image/png;base64,' -or $reportPrint.Content -notmatch 'Sede Petén') { throw 'El reporte no conserva logo y sede institucional.' }
     $report = Invoke-Api -Method Post -Path "/api/v1/reports/$($report.id)/review" -Token $adminToken
     $report = Invoke-Api -Method Post -Path "/api/v1/reports/$($report.id)/send" -Token $adminToken -Body @{
         recipients = @('qa@example.test')
@@ -745,12 +774,12 @@ try {
     $updatedStudent = Invoke-Api -Method Get -Path "/api/v1/students/$($student.id)" -Token $studentToken
     if ($updatedStudent.fullName -ne $updatedSelf.fullName) { throw 'El nombre administrado por el alumno no se sincronizó con su perfil académico.' }
     $null = Invoke-Api -Method Put -Path '/api/v1/users/me/photo' -Token $studentToken -Body @{ documentId = $null }
-    $studentPasswordChanged = "Changed!2026_$suffix"
+    $studentPasswordChanged = 'newpassx'
     $null = Invoke-Api -Method Post -Path '/api/v1/users/me/change-password' -Token $studentToken -ExpectedStatus 204 -Body @{
         currentPassword = $studentPassword; newPassword = $studentPasswordChanged
     }
     $studentLogin = Invoke-Api -Method Post -Path '/api/v1/auth/login' -Body @{ email = $studentUser.email; password = $studentPasswordChanged }
-    $studentPasswordReset = "Reset!2026_$suffix"
+    $studentPasswordReset = 'resetpwd'
     $null = Invoke-Api -Method Post -Path "/api/v1/users/$($studentUser.id)/reset-password" -Token $adminToken -ExpectedStatus 204 -Body @{ newPassword = $studentPasswordReset }
     $null = Invoke-Api -Method Post -Path '/api/v1/auth/login' -Body @{ email = $studentUser.email; password = $studentPasswordReset }
 

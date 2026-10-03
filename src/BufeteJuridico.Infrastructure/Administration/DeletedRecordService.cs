@@ -143,7 +143,6 @@ internal sealed class DeletedRecordService(
         var client = await dbContext.Clients.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
             ?? throw new NotFoundException("No se encontró el cliente.");
         MarkDeleted(client, reason, now, batchId);
-        client.IsActive = false;
 
         var cases = await dbContext.LegalCases.Where(item => item.ClientId == id).ToListAsync(cancellationToken);
         foreach (var legalCase in cases) MarkDeleted(legalCase, "Cliente eliminado", now, batchId);
@@ -184,7 +183,6 @@ internal sealed class DeletedRecordService(
             ?? throw new NotFoundException("No se encontró el cliente eliminado.");
         var batchId = client.DeletionBatchId;
         Restore(client);
-        client.IsActive = true;
         if (batchId is Guid batch)
         {
             var cases = await dbContext.LegalCases.IgnoreQueryFilters().Where(item => item.DeletionBatchId == batch).ToListAsync(cancellationToken);

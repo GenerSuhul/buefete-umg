@@ -68,5 +68,5 @@ export function DetailTabs({ tabs, active, onChange }: { tabs: Array<{ id: strin
 }
 
 export function InfoItem({ label, value }: { label: string; value: ReactNode }) {
-  return <div className="info-item"><span>{label}</span><strong>{value || 'No registrado'}</strong></div>;
+  return <div className="info-item"><span>{label}</span><strong>{value === null || value === undefined || value === '' ? 'No registrado' : value}</strong></div>;
 }

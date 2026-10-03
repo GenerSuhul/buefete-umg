@@ -13,8 +13,13 @@ public sealed class ClientsController(IClientService service, IDeletedRecordServ
     [HttpGet]
     [Authorize(Policy = Permissions.ClientsRead)]
     public async Task<ActionResult<PagedResult<ClientDto>>> GetAll(
-        string? search, int page = 1, int pageSize = 25, CancellationToken cancellationToken = default) =>
-        Ok(await service.GetClientsAsync(search, page, pageSize, cancellationToken));
+        string? search, int page = 1, int pageSize = 25, CancellationToken cancellationToken = default, bool? isActive = true) =>
+        Ok(await service.GetClientsAsync(search, page, pageSize, cancellationToken, isActive));
+
+    [HttpPut("{id:guid}/attention")]
+    [Authorize(Policy = Permissions.ClientsWrite)]
+    public async Task<ActionResult<ClientDto>> SetAttention(Guid id, SetClientAttentionRequest request, CancellationToken cancellationToken) =>
+        Ok(await service.SetAttentionAsync(id, request, cancellationToken));
 
     [HttpGet("{id:guid}")]
     [Authorize(Policy = Permissions.ClientsRead)]

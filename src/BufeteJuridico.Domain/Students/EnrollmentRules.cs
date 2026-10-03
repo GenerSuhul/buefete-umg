@@ -1,3 +1,5 @@
+using BufeteJuridico.Domain.Catalogs;
+
 namespace BufeteJuridico.Domain.Students;
 
 public static class EnrollmentRules
@@ -26,6 +28,31 @@ public static class EnrollmentRules
 
 public static class RequirementRules
 {
+    public static bool IsSatisfied(
+        RequirementFulfillmentStatus status,
+        bool isConditional) =>
+        status == RequirementFulfillmentStatus.Accepted ||
+        (isConditional && status == RequirementFulfillmentStatus.NotApplicable);
+
+    public static bool RequiresEvidence(RequirementFulfillmentStatus status) =>
+        status is RequirementFulfillmentStatus.Submitted or
+            RequirementFulfillmentStatus.Accepted or
+            RequirementFulfillmentStatus.Observed or
+            RequirementFulfillmentStatus.Expired;
+
+    public static bool HasEvidence(
+        RequirementKind kind,
+        Guid? documentId,
+        string? dataValue,
+        bool? conditionMet = null) =>
+        kind switch
+        {
+            RequirementKind.Document => documentId is not null,
+            RequirementKind.Data => !string.IsNullOrWhiteSpace(dataValue),
+            RequirementKind.Condition => conditionMet is not null,
+            _ => false
+        };
+
     public static RequirementFulfillmentStatus DetermineStatus(
         RequirementFulfillmentStatus requestedStatus,
         DateOnly? documentIssueDate,

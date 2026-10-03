@@ -19,7 +19,10 @@ Internet
      -> observabilidad centralizada y alertas
 ```
 
-El frontend se publica como contenido estático detrás de CDN. Las réplicas de la
+El frontend Next.js actual se ejecuta como servicio Node.js `standalone` detrás
+de proxy HTTPS; sus recursos estáticos pueden servirse desde CDN. Si se despliegan
+varias réplicas de Next.js, deben utilizar el mismo build y coordinar cualquier
+caché/revalidación compartida antes de prometer consistencia. Las réplicas de la
 API no conservan archivos ni sesiones locales: JWT, PostgreSQL y el bucket
 privado permiten distribuir solicitudes entre instancias.
 
@@ -59,6 +62,10 @@ privado permiten distribuir solicitudes entre instancias.
   rechaza el arranque productivo con comodín, proxy indefinido o almacenamiento
   local para evitar una degradación silenciosa de seguridad y disponibilidad.
 - Secretos gestionados fuera de imágenes, repositorio y archivos distribuidos.
+- Compartir el anillo de claves de ASP.NET Core Data Protection entre réplicas,
+  persistirlo fuera del contenedor y cifrarlo en reposo. El volumen de
+  `compose.app.yaml` sólo conserva claves para la demostración local; no es un
+  almacén de claves productivo.
 - Despliegue gradual con rollback; no migrar automáticamente al arrancar cada
   réplica.
 - Logs estructurados, métricas y trazas sin documentos, contraseñas ni DPI.

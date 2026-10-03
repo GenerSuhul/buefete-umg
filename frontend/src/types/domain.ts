@@ -88,6 +88,7 @@ export interface CaseRequirement {
   id: Id;
   requirementDefinitionId: Id;
   label: string;
+  kind: 'Document' | 'Data' | 'Condition';
   isRequired: boolean;
   isConditional: boolean;
   status: RequirementStatus;
@@ -280,7 +281,9 @@ export interface StudentRequirement {
   id: Id;
   requirementDefinitionId: Id;
   label: string;
+  kind: 'Document' | 'Data' | 'Condition';
   isRequired?: boolean;
+  isConditional: boolean;
   status: RequirementStatus;
   documentId: Id | null;
   dataValue: string | null;

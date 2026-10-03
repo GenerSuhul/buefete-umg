@@ -1,5 +1,6 @@
 using BufeteJuridico.Application.Common;
 using BufeteJuridico.Domain.Cases;
+using BufeteJuridico.Domain.Catalogs;
 using BufeteJuridico.Domain.Students;
 
 namespace BufeteJuridico.Application.Cases;
@@ -32,6 +33,7 @@ public sealed record CaseRequirementDto(
     Guid Id,
     Guid RequirementDefinitionId,
     string Label,
+    RequirementKind Kind,
     bool IsRequired,
     bool IsConditional,
     RequirementFulfillmentStatus Status,

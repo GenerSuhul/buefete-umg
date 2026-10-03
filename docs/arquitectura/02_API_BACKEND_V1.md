@@ -68,6 +68,20 @@ Base: `/api/v1/users` y `/api/v1/roles`.
 
 Base: `/api/v1/clients`.
 
+En la interfaz estas personas se denominan **Usuarios**; las cuentas de inicio de
+sesión se administran en **Accesos y personal**. Los contratos no se renombran.
+
+- `GET /api/v1/clients?isActive=true|false`: filtra la atención vigente;
+  por defecto `true`. La eliminación lógica se filtra independientemente.
+- `PUT /api/v1/clients/{id}/attention`: recibe `{ isActive, concurrencyToken }`,
+  exige `clients.write` y devuelve `ClientDto` actualizado. Token obsoleto: `409`;
+  token vacío: `400`; registro inexistente o eliminado: `404`.
+- Finalizar atención conserva ficha, documentos e historial y no cierra expedientes
+  existentes. Impide abrir nuevos expedientes hasta reactivar. Restaurar un registro
+  eliminado conserva su estado de atención previo.
+- Consumidores: `ClientsPage` (filtro) y `ClientDetailPage` (confirmar cambio),
+  mediante `dataSource`; persistencia `bufete.clients` y `bufete.audit_logs`.
+
 ### Alumnos e inscripción
 
 - búsqueda, detalle y perfil consolidado con expedientes;

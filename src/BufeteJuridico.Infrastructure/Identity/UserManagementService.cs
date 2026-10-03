@@ -447,13 +447,9 @@ internal sealed class UserManagementService(
 
     private static void ValidatePassword(string password)
     {
-        if (password.Length < 12 ||
-            !password.Any(char.IsUpper) ||
-            !password.Any(char.IsLower) ||
-            !password.Any(char.IsDigit) ||
-            !password.Any(character => !char.IsLetterOrDigit(character)))
+        if (!PasswordRules.IsValid(password))
         {
-            throw new ValidationException("La contraseña debe tener al menos 12 caracteres, mayúscula, minúscula, número y símbolo.");
+            throw new ValidationException("La contraseña debe tener entre 8 y 128 caracteres.");
         }
     }
 

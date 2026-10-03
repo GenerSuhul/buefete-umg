@@ -1,4 +1,4 @@
-const scannerAgentUrl = (import.meta.env.VITE_SCANNER_AGENT_URL ?? 'http://127.0.0.1:17654').replace(/\/$/, '');
+const scannerAgentUrl = (process.env.NEXT_PUBLIC_SCANNER_AGENT_URL ?? 'http://127.0.0.1:17654').replace(/\/$/, '');
 
 export interface ScannerAgentHealth {
   ready: boolean;

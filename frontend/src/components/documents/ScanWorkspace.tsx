@@ -536,7 +536,7 @@ export function ScanWorkspace({
                   label="Tipo de registro"
                   value={
                     form.contextType === "Client"
-                      ? "Cliente"
+                      ? "Usuario"
                       : form.contextType === "Student"
                         ? "Alumno"
                         : form.contextType === "LegalCase"
@@ -560,7 +560,7 @@ export function ScanWorkspace({
                       });
                     }}
                   >
-                    <option value="Client">Cliente</option>
+                    <option value="Client">Usuario</option>
                     <option value="Student">Alumno</option>
                     <option value="LegalCase">Expediente</option>
                   </Select>

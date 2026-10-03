@@ -1,3 +1,4 @@
+using BufeteJuridico.Domain.Catalogs;
 using BufeteJuridico.Domain.Identity;
 using BufeteJuridico.Domain.Students;
 
@@ -5,6 +6,17 @@ namespace BufeteJuridico.UnitTests.Domain;
 
 public sealed class BusinessRulesTests
 {
+    [Theory]
+    [InlineData("abcdefgh", true)]
+    [InlineData("12345678", true)]
+    [InlineData("a b c d e", true)]
+    [InlineData("abcdefg", false)]
+    [InlineData("        ", false)]
+    public void Password_accepts_eight_characters_without_composition_rules(string password, bool expected)
+    {
+        Assert.Equal(expected, PasswordRules.IsValid(password));
+    }
+
     [Theory]
     [InlineData(EnrollmentStatus.Draft, EnrollmentStatus.Submitted)]
     [InlineData(EnrollmentStatus.Submitted, EnrollmentStatus.Admitted)]
@@ -48,6 +60,42 @@ public sealed class BusinessRulesTests
             new DateOnly(2026, 8, 14));
 
         Assert.Equal(RequirementFulfillmentStatus.Accepted, status);
+    }
+
+    [Theory]
+    [InlineData(RequirementKind.Document, true, false, false, true)]
+    [InlineData(RequirementKind.Document, false, false, false, false)]
+    [InlineData(RequirementKind.Data, false, true, false, true)]
+    [InlineData(RequirementKind.Data, false, false, false, false)]
+    [InlineData(RequirementKind.Condition, false, false, true, true)]
+    [InlineData(RequirementKind.Condition, false, false, false, false)]
+    public void Requirement_requires_its_matching_evidence(
+        RequirementKind kind,
+        bool hasDocument,
+        bool hasData,
+        bool hasCondition,
+        bool expected)
+    {
+        var actual = RequirementRules.HasEvidence(
+            kind,
+            hasDocument ? Guid.NewGuid() : null,
+            hasData ? "Dato registrado" : null,
+            hasCondition ? true : null);
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData(RequirementFulfillmentStatus.Accepted, false, true)]
+    [InlineData(RequirementFulfillmentStatus.NotApplicable, true, true)]
+    [InlineData(RequirementFulfillmentStatus.NotApplicable, false, false)]
+    [InlineData(RequirementFulfillmentStatus.Pending, true, false)]
+    public void Requirement_counts_only_valid_fulfillment(
+        RequirementFulfillmentStatus status,
+        bool isConditional,
+        bool expected)
+    {
+        Assert.Equal(expected, RequirementRules.IsSatisfied(status, isConditional));
     }
 
     [Fact]

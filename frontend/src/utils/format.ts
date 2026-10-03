@@ -68,7 +68,7 @@ const labels: Record<string, string> = {
   ImageImport: "Importación de imagen",
   Wia: "Escáner WIA",
   Generated: "Generado",
-  Client: "Cliente",
+  Client: "Usuario",
   IncomeDeclaration: "Declaración de ingresos",
   Student: "Alumno",
   Enrollment: "Inscripción",

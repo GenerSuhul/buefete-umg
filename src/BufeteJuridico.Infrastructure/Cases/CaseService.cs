@@ -2,6 +2,7 @@ using BufeteJuridico.Application.Authorization;
 using BufeteJuridico.Application.Cases;
 using BufeteJuridico.Application.Common;
 using BufeteJuridico.Domain.Cases;
+using BufeteJuridico.Domain.Catalogs;
 using BufeteJuridico.Domain.Documents;
 using BufeteJuridico.Domain.Students;
 using BufeteJuridico.Infrastructure.Persistence;
@@ -193,6 +194,17 @@ internal sealed class CaseService(
                 cancellationToken);
         }
 
+        if (RequirementRules.RequiresEvidence(request.Status) &&
+            !RequirementRules.HasEvidence(requirement.Kind, request.DocumentId, request.DataValue, request.ConditionMet))
+        {
+            throw new ValidationException(requirement.Kind == RequirementKind.Document
+                ? "Adjunte un documento antes de registrar su revisión."
+                : "Complete la evidencia requerida antes de registrar su revisión.");
+        }
+
+        if (request.Status == RequirementFulfillmentStatus.NotApplicable && !requirement.IsConditional)
+            throw new ValidationException("Solo los requisitos condicionales pueden marcarse como no aplicables.");
+
         requirement.Status = RequirementRules.DetermineStatus(
             request.Status,
             request.DocumentIssueDate,
@@ -215,7 +227,7 @@ internal sealed class CaseService(
             DocumentId = requirement.DocumentId
         });
 
-        if (legalCase.Requirements.Where(item => item.IsRequired).All(item => item.Status == RequirementFulfillmentStatus.Accepted))
+        if (legalCase.Requirements.Where(item => item.IsRequired).All(item => RequirementRules.IsSatisfied(item.Status, item.IsConditional)))
         {
             legalCase.Status = LegalCaseStatus.Active;
             if (legalCase.Stage == "RecoleccionDocumental") legalCase.Stage = "EnTramite";
@@ -815,6 +827,7 @@ internal sealed class CaseService(
         item.Id,
         item.RequirementDefinitionId,
         item.RequirementLabel,
+        item.Kind,
         item.IsRequired,
         item.IsConditional,
         item.Status,

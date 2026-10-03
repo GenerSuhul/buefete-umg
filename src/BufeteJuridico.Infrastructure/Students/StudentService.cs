@@ -128,9 +128,9 @@ internal sealed class StudentService(
             .ToListAsync(cancellationToken);
         var requirementIds = enrollments.SelectMany(item => item.Requirements)
             .Select(item => item.RequirementDefinitionId).Distinct().ToList();
-        var requirementFlags = await dbContext.RequirementDefinitions.AsNoTracking()
+        var requirementMetadata = await dbContext.RequirementDefinitions.AsNoTracking()
             .Where(item => requirementIds.Contains(item.Id))
-            .ToDictionaryAsync(item => item.Id, item => item.IsRequired, cancellationToken);
+            .ToDictionaryAsync(item => item.Id, item => new RequirementMetadata(item.Kind, item.IsRequired, item.IsConditional), cancellationToken);
         var assignments = await dbContext.CaseAssignments.AsNoTracking()
             .Include(item => item.LegalCase).ThenInclude(item => item.Client)
             .Include(item => item.LegalCase).ThenInclude(item => item.ProcessType)
@@ -160,7 +160,7 @@ internal sealed class StudentService(
         var photos = await GetPhotoMapAsync([student], cancellationToken);
         return new StudentProfileDto(
             Map(student, Photo(student, photos)),
-            enrollments.Select(item => Map(item, requirementFlags)).ToList(),
+            enrollments.Select(item => Map(item, requirementMetadata)).ToList(),
             cases);
     }
 
@@ -439,6 +439,17 @@ internal sealed class StudentService(
         if (request.DocumentId is Guid requirementDocumentId)
             await documentService.EnsureDocumentMatchesContextAsync(requirementDocumentId, DocumentContextType.Enrollment, enrollment.Id, cancellationToken);
 
+        if (RequirementRules.RequiresEvidence(request.Status) &&
+            !RequirementRules.HasEvidence(definition.Kind, request.DocumentId, request.DataValue))
+        {
+            throw new ValidationException(definition.Kind == RequirementKind.Document
+                ? "Adjunte un documento antes de registrar su revisión."
+                : "Complete la evidencia requerida antes de registrar su revisión.");
+        }
+
+        if (request.Status == RequirementFulfillmentStatus.NotApplicable && !definition.IsConditional)
+            throw new ValidationException("Solo los requisitos condicionales pueden marcarse como no aplicables.");
+
         requirement.Status = RequirementRules.DetermineStatus(
             request.Status,
             request.DocumentIssueDate,
@@ -569,7 +580,7 @@ internal sealed class StudentService(
 
     private static EnrollmentApplicationDto Map(
         EnrollmentApplication item,
-        IReadOnlyDictionary<Guid, bool>? requirementFlags = null) => new(
+        IReadOnlyDictionary<Guid, RequirementMetadata>? requirementMetadata = null) => new(
         item.Id,
         item.StudentId,
         item.Modality,
@@ -594,17 +605,21 @@ internal sealed class StudentService(
         item.Requirements.OrderBy(requirement => requirement.RequirementLabel)
             .Select(requirement => Map(
                 requirement,
-                requirementFlags?.GetValueOrDefault(requirement.RequirementDefinitionId) ?? false))
+                requirementMetadata?.GetValueOrDefault(requirement.RequirementDefinitionId)))
             .ToList());
 
-    private static StudentRequirementDto Map(StudentRequirement item, bool isRequired = false) => new(
+    private static StudentRequirementDto Map(StudentRequirement item, RequirementMetadata? metadata = null) => new(
         item.Id,
         item.RequirementDefinitionId,
         item.RequirementLabel,
-        isRequired,
+        metadata?.Kind ?? RequirementKind.Document,
+        metadata?.IsRequired ?? false,
+        metadata?.IsConditional ?? false,
         item.Status,
         item.DocumentId,
         item.DataValue,
         item.DocumentIssueDate,
         item.Notes);
+
+    private sealed record RequirementMetadata(RequirementKind Kind, bool IsRequired, bool IsConditional);
 }

@@ -100,7 +100,7 @@ export function DocumentAcquisition({
     <div className="form-grid">
       <Field label="Tipo de registro">
         <Select value={form.contextType} onChange={(event) => setForm({ ...form, contextType: event.target.value as DocumentContext, contextId: "", replaceDocumentId: "" })}>
-          <option value="Client">Cliente</option>
+          <option value="Client">Usuario</option>
           <option value="Student">Alumno</option>
           <option value="LegalCase">Expediente</option>
         </Select>

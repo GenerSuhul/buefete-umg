@@ -50,7 +50,9 @@ export const motion = {
     });
   },
   routeEnter(root: HTMLElement) {
-    return run(root.querySelectorAll<HTMLElement>(":scope > .page-header, :scope > .dashboard-grid, :scope > .detail-layout, :scope > .directory-shell, :scope > .card, :scope > section"), {
+    const targets = root.querySelectorAll<HTMLElement>(":scope > .page-header, :scope > .dashboard-grid, :scope > .detail-layout, :scope > .directory-shell, :scope > .card, :scope > section");
+    if (!targets.length) return completed;
+    return run(targets, {
       opacity: { from: 0, to: 1 },
       y: { from: 7, to: 0 },
       duration: motionDuration.normal,

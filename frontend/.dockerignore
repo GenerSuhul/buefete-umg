@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.next
+node_modules
+coverage
+dist
+*.tsbuildinfo
+README.md
+AGENTS.md
+CLAUDE.md
+UI_DESIGN_SYSTEM.md
