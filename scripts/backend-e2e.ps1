@@ -1,6 +1,7 @@
 param(
     [int]$Port = 5104,
-    [switch]$KeepDatabase
+    [switch]$KeepDatabase,
+    [switch]$ProxyS3Downloads
 )
 
 $ErrorActionPreference = 'Stop'
@@ -218,6 +219,9 @@ function Upload-ScanCapture {
 }
 
 Import-EnvironmentFile $environmentPath
+if ($ProxyS3Downloads -and $env:Storage__Provider -eq 'S3') {
+    $env:Storage__S3__UsePresignedUrls = 'false'
+}
 
 if ($databaseName -notmatch '^bufete_juridico_e2e_[a-f0-9]{12}$') {
     throw 'El nombre de la base temporal no superó la validación de seguridad.'
@@ -626,6 +630,14 @@ try {
     $document = Upload-TestDocument -Token $adminToken -ContextId $legalCase.summary.id
     $imageDocument = Upload-TestDocument -Token $adminToken -ContextId $legalCase.summary.id -Kind Image
     if ($imageDocument.contentType -ne 'image/png') { throw 'La imagen PNG no conservó su tipo de contenido.' }
+    if ($ProxyS3Downloads) {
+        $readAccess = Invoke-Api -Method Get -Path "/api/v1/documents/$($imageDocument.id)/access" -Token $adminToken
+        if ($readAccess.url) { throw 'La API publicó una URL interna de MinIO en lugar de entregar el archivo autenticado.' }
+        $imageDownload = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/v1/documents/$($imageDocument.id)/content" -Headers @{ Authorization = "Bearer $adminToken" }
+        if ([int]$imageDownload.StatusCode -ne 200 -or $imageDownload.Headers['Content-Type'] -notlike 'image/png*') {
+            throw 'La imagen no se descargó por el flujo autenticado de la API.'
+        }
+    }
     $replacementImage = Upload-TestDocument -Token $adminToken -ContextId $legalCase.summary.id -Kind Image -ReplaceDocumentId $imageDocument.id
     if ($replacementImage.versionNumber -ne 2 -or $replacementImage.previousVersionId -ne $imageDocument.id) {
         throw 'La sustitución no creó una cadena de versiones válida.'
@@ -644,7 +656,7 @@ try {
     $null = Invoke-Api -Method Get -Path "/api/v1/documents/$($document.id)" -Token $adminToken
     $null = Invoke-Api -Method Get -Path "/api/v1/documents?contextType=LegalCase&contextId=$($legalCase.summary.id)&page=1&pageSize=25" -Token $adminToken
     $documentDownload = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/v1/documents/$($document.id)/content" -Headers @{ Authorization = "Bearer $adminToken" }
-    if ([int]$documentDownload.StatusCode -ne 200 -or $documentDownload.Headers['Content-Type'] -notlike 'application/pdf*') { throw 'El proveedor local no devolvió el documento cargado.' }
+    if ([int]$documentDownload.StatusCode -ne 200 -or $documentDownload.Headers['Content-Type'] -notlike 'application/pdf*') { throw 'El almacenamiento no devolvió el documento cargado.' }
     if ($null -ne $caseRequirement) {
         $null = Invoke-Api -Method Put -Path "/api/v1/cases/$($legalCase.summary.id)/requirements/$($caseRequirement.id)" -Token $adminToken -Body @{
             status = 'Accepted'; documentId = $requirementScanDocument.id; dataValue = $null; conditionMet = $true

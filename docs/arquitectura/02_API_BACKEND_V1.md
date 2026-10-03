@@ -131,8 +131,11 @@ Base: `/api/v1/cases`.
 - soporte de origen `Scanner` para archivos producidos por el componente local
   de adquisición;
 - almacenamiento seleccionable local/S3 compatible;
-- descarga local por streaming o redirección mediante URL firmada cuando el
-  proveedor es S3.
+- descarga autorizada por streaming o redirección mediante URL firmada cuando
+  el proveedor es S3 y `Storage:S3:UsePresignedUrls` está habilitado. Si el
+  almacenamiento sólo tiene una URL interna (por ejemplo, `minio:9000` en
+  Compose), se deshabilitan las URL firmadas y la API entrega el contenido;
+  nunca debe enviarse al navegador una URL interna de contenedor.
 
 Base: `/api/v1/documents`.
 

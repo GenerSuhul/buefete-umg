@@ -20,8 +20,9 @@ x-api-environment: &api-environment
   Storage__Provider: S3
   Storage__S3__BucketName: "${MINIO_BUCKET:-bufete-documentos}"
   Storage__S3__Region: us-east-1
-  Storage__S3__ServiceUrl: "http://host.docker.internal:${MINIO_API_PORT:-59000}"
+  Storage__S3__ServiceUrl: "http://minio:9000"
   Storage__S3__ForcePathStyle: "true"
+  Storage__S3__UsePresignedUrls: "false"
   Storage__S3__AccessKey: "${MINIO_ROOT_USER:?MINIO_ROOT_USER es obligatorio}"
   Storage__S3__SecretKey: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD es obligatorio}"
   Storage__S3__KeyPrefix: bufete
@@ -39,8 +40,6 @@ services:
     init: true
     restart: unless-stopped
     environment: *api-environment
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

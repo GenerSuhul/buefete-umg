@@ -29,6 +29,8 @@ public sealed class S3StorageOptions
 
     public string ServiceUrl { get; set; } = string.Empty;
 
+    public bool UsePresignedUrls { get; set; } = true;
+
     public bool ForcePathStyle { get; set; }
 
     public string AccessKey { get; set; } = string.Empty;

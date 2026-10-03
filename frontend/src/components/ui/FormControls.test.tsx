@@ -147,4 +147,30 @@ describe('controles de formulario', () => {
     });
     await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2));
   });
+
+  it('carga la fotografía por la API cuando MinIO no publica una URL firmada', async () => {
+    const originalCreate = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+    const originalRevoke = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:foto-autorizada') });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+
+    try {
+      vi.spyOn(dataSource, 'getDocumentReadAccess').mockResolvedValue({
+        fileName: 'foto.png',
+        contentType: 'image/png',
+        url: null,
+        expiresAtUtc: null,
+      });
+      const download = vi.spyOn(dataSource, 'downloadDocument').mockResolvedValue(new Blob(['foto'], { type: 'image/png' }));
+      const { container } = render(<Avatar name="Ana López" documentId="photo-1" />);
+
+      await waitFor(() => expect(container.querySelector('img')).toHaveAttribute('src', 'blob:foto-autorizada'));
+      expect(download).toHaveBeenCalledWith('photo-1');
+    } finally {
+      if (originalCreate) Object.defineProperty(URL, 'createObjectURL', originalCreate);
+      else Reflect.deleteProperty(URL, 'createObjectURL');
+      if (originalRevoke) Object.defineProperty(URL, 'revokeObjectURL', originalRevoke);
+      else Reflect.deleteProperty(URL, 'revokeObjectURL');
+    }
+  });
 });

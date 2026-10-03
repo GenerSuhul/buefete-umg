@@ -144,6 +144,9 @@ docker compose -f compose.yaml -f compose.app.yaml up -d postgres minio minio-in
 - API en `http://127.0.0.1:5104/health/ready`.
 - `NEXT_PUBLIC_API_BASE_URL` y la URL del escáner se incorporan al **build** del
   frontend; para cambiar de dominio hay que reconstruir la imagen web.
+- En este despliegue local, la API lee los archivos desde MinIO por la red de
+  Compose y los entrega tras autorizar la petición. No publica enlaces firmados
+  con nombres internos de Docker que el navegador de Windows no puede abrir.
 - `compose.app.yaml` es una demostración local: usa `Development` y una sola
   instancia, y permite migraciones al arrancar. No es un manifiesto de producción
   ni equivale a alta disponibilidad. Persiste el anillo local de Data Protection

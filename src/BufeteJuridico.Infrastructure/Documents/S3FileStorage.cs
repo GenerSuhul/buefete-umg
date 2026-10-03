@@ -95,6 +95,8 @@ internal sealed class S3FileStorage(
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (!settings.UsePresignedUrls) return null;
+
         var url = await client.GetPreSignedURLAsync(new GetPreSignedUrlRequest
         {
             BucketName = settings.BucketName,
