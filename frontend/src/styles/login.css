@@ -67,6 +67,7 @@
 .login-brand__copy > small { color: #a9c9e7; font-size: 12px; font-weight: 800; letter-spacing: 1.8px; }
 .login-brand h1 { margin: 15px 0 18px; font-size: clamp(38px, 3.6vw, 54px); line-height: 1.02; letter-spacing: -2.6px; font-weight: 650; }
 .login-brand h1 em { color: #b7d5f0; font-style: normal; font-weight: 450; }
+.login-brand__location { display: inline-block; margin-left: 8px; color: #b7d5f0; font-size: .42em; font-weight: 700; letter-spacing: .04em; vertical-align: baseline; }
 .login-brand__copy p { max-width: 380px; margin: 0; color: rgb(255 255 255 / 67%); font-size: 14px; line-height: 1.7; }
 .login-brand__copy .login-brand__tagline { margin-bottom: 8px; color: #b7d5f0; font-size: 12px; font-weight: 750; letter-spacing: .25px; }
 

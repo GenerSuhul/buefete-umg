@@ -31,7 +31,7 @@ export function LoginPage() {
     try {
       await login(email, password);
       setStatus('success');
-      notify.success({ title: 'Acceso concedido', message: 'Bienvenido al Bufete Popular UMG.', duration: 3500 });
+      notify.success({ title: 'Acceso concedido', message: 'Bienvenido al Bufete Popular UMG, sede Petén.', duration: 3500 });
       const button = formRef.current?.querySelector<HTMLElement>('.button');
       const animations = [shellRef.current ? motion.loginExit(shellRef.current).finished : Promise.resolve(), button ? motion.successPulse(button).finished : Promise.resolve()];
       await Promise.all(animations);
@@ -45,14 +45,14 @@ export function LoginPage() {
 
   return <main className="login-page">
     <div className="login-shell" ref={shellRef}>
-      <section className="login-brand" aria-label="Bufete Jurídico UMG">
+      <section className="login-brand" aria-label="Bufete Popular UMG, sede Petén">
         <div className="login-brand__mark">
           <span><Scale size={22} /></span>
           <div><small>UMG</small><strong>Bufete Popular</strong></div>
         </div>
         <div className="login-brand__copy">
           <small>GESTIÓN JURÍDICA INTERNA</small>
-          <h1>Bufete Popular<br /><em>UMG</em></h1>
+          <h1 aria-label="Bufete Popular UMG Petén">Bufete Popular<br /><em>UMG</em>{' '}<span className="login-brand__location">Petén</span></h1>
           <p className="login-brand__tagline">Casos claros. Seguimiento responsable.</p>
           <p>Gestión interna de expedientes, práctica supervisada y trazabilidad institucional.</p>
         </div>

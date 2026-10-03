@@ -11,6 +11,7 @@ function LoginHarness() {
 describe("experiencia de acceso", () => {
   it("confirma el acceso correcto y entra al sistema", async () => {
     render(<LoginHarness />);
+    expect(screen.getByRole("heading", { name: /Bufete Popular UMG Petén/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Ingresar al sistema/i }));
     expect(await screen.findByText("Acceso concedido")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Resumen operativo" })).toBeInTheDocument();
