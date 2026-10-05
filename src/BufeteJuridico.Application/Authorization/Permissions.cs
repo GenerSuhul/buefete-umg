@@ -5,6 +5,7 @@ public static class Permissions
     public const string UsersRead = "users.read";
     public const string UsersWrite = "users.write";
     public const string UsersDeactivate = "users.deactivate";
+    public const string UsersPurge = "users.purge";
     public const string RolesManage = "roles.manage";
     public const string ClientsRead = "clients.read";
     public const string ClientsWrite = "clients.write";
@@ -37,6 +38,7 @@ public static class Permissions
         new(UsersRead, "Usuarios", "Consultar usuarios internos"),
         new(UsersWrite, "Usuarios", "Crear y modificar usuarios internos"),
         new(UsersDeactivate, "Usuarios", "Dar de baja lógica usuarios internos"),
+        new(UsersPurge, "Usuarios", "Eliminar definitivamente cuentas dadas de baja"),
         new(RolesManage, "Usuarios", "Administrar roles y permisos"),
         new(ClientsRead, "Clientes", "Consultar clientes"),
         new(ClientsWrite, "Clientes", "Crear y modificar clientes y declaraciones"),

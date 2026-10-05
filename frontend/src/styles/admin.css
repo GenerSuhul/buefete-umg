@@ -6,6 +6,20 @@
 .admin-list article > div, .admin-list article > span:nth-child(3) { min-width: 0; display: grid; }
 .admin-list strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-list small { color: var(--ink-500); font-size: 12px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-directory-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.user-directory-tabs { display: flex; gap: 6px; }
+.user-directory-toolbar .button { min-height: 40px; padding: 8px 13px; }
+.user-directory-search { display: flex; gap: 6px; margin-left: auto; }
+.user-directory-search input { min-width: 190px; min-height: 40px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: #fff; }
+.user-directory-list article { grid-template-columns: 46px minmax(150px, 1.1fr) minmax(150px, .9fr) auto minmax(240px, auto); }
+.user-directory-list strong { font-size: 14px; }
+.user-directory-list small { font-size: 13px; }
+.user-directory-list .inline-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+.user-directory-list .inline-actions .button { min-height: 36px; padding: 7px 9px; font-size: 12px; }
+.user-directory-empty { padding: 32px 12px; color: var(--ink-500); text-align: center; }
+.user-purge-warning { line-height: 1.5; }
+.user-purge-warning strong { overflow-wrap: anywhere; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .audit-table__head, .audit-table article { display: grid; grid-template-columns: 1fr .8fr 1fr .7fr; gap: 15px; align-items: center; }
 .audit-table__head { padding: 0 12px 10px; color: var(--ink-500); font-size: 12px; }
 .audit-table article { min-height: 66px; padding: 10px 12px; border-radius: var(--radius-sm); }
@@ -58,6 +72,11 @@
   .deleted-records-list article > span:nth-of-type(n+3), .deleted-records-list article > .badge { display: none; }
   .admin-list article { grid-template-columns: 46px 1fr auto; }
   .admin-list article > span:nth-child(3), .admin-list article > .button { display: none; }
+  .user-directory-list article { grid-template-columns: 46px minmax(0, 1fr) auto; }
+  .user-directory-list article > span:nth-child(3) { display: none; }
+  .user-directory-list .inline-actions { grid-column: 2 / -1; justify-content: flex-start; }
+  .user-directory-search { margin-left: 0; width: 100%; }
+  .user-directory-search input { flex: 1; min-width: 0; }
   .catalog-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 650px) {

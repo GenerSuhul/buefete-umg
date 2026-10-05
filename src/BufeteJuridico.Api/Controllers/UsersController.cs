@@ -13,10 +13,12 @@ public sealed class UsersController(IUserManagementService service, ICurrentUser
     [Authorize(Policy = Permissions.UsersRead)]
     public async Task<ActionResult<PagedResult<UserSummaryDto>>> GetAll(
         [FromQuery] string? search,
+        [FromQuery] string? lifecycle,
+        [FromQuery] string? personType,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 25,
         CancellationToken cancellationToken = default) =>
-        Ok(await service.GetUsersAsync(search, page, pageSize, cancellationToken));
+        Ok(await service.GetUsersAsync(search, lifecycle, personType, page, pageSize, cancellationToken));
 
     [HttpGet("{id:guid}")]
     [Authorize(Policy = Permissions.UsersRead)]
@@ -41,6 +43,25 @@ public sealed class UsersController(IUserManagementService service, ICurrentUser
     public async Task<IActionResult> Deactivate(Guid id, CancellationToken cancellationToken)
     {
         await service.DeactivateUserAsync(id, cancellationToken);
+        return NoContent();
+    }
+
+    [HttpPut("{id:guid}/access")]
+    [Authorize(Policy = Permissions.UsersDeactivate)]
+    public async Task<ActionResult<UserSummaryDto>> SetAccess(Guid id, SetUserAccessRequest request, CancellationToken cancellationToken) =>
+        Ok(await service.SetAccessAsync(id, request, cancellationToken));
+
+    [HttpPost("{id:guid}/restore")]
+    [Authorize(Policy = Permissions.UsersDeactivate)]
+    public async Task<ActionResult<UserSummaryDto>> Restore(Guid id, CancellationToken cancellationToken) =>
+        Ok(await service.RestoreUserAsync(id, cancellationToken));
+
+    [HttpDelete("{id:guid}/permanent")]
+    [Authorize(Policy = Permissions.UsersPurge)]
+    [Authorize(Roles = "Administrador")]
+    public async Task<IActionResult> Purge(Guid id, CancellationToken cancellationToken)
+    {
+        await service.PurgeUserAsync(id, cancellationToken);
         return NoContent();
     }
 

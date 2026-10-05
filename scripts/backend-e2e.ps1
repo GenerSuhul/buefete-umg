@@ -478,7 +478,11 @@ try {
 
     $null = Invoke-Api -Method Get -Path "/api/v1/users?search=$suffix&page=1&pageSize=10" -Token $adminToken
     $null = Invoke-Api -Method Get -Path "/api/v1/users/$($studentUser.id)" -Token $adminToken
-    $studentUser = Invoke-Api -Method Put -Path "/api/v1/users/$($studentUser.id)" -Token $adminToken -Body @{
+    $null = Invoke-Api -Method Post -Path "/api/v1/users/$($adminProfile.id)/roles" -Token $adminToken -ExpectedStatus 409 -Body @{
+        roleId = $studentRole.id; validFromUtc = $null; validUntilUtc = $null
+    }
+    $null = Invoke-Api -Method Delete -Path "/api/v1/users/$($studentUser.id)/roles/$($studentRole.id)" -Token $adminToken -ExpectedStatus 409
+    $null = Invoke-Api -Method Put -Path "/api/v1/users/$($studentUser.id)" -Token $adminToken -ExpectedStatus 409 -Body @{
         email = $studentUser.email; fullName = $studentUser.fullName; isActive = $true
         participationStartDate = $studentUser.participationStartDate; participationEndDate = $studentUser.participationEndDate; roleIds = @($studentRole.id)
     }
@@ -856,6 +860,26 @@ try {
     $null = Invoke-Api -Method Post -Path '/api/v1/auth/login' -Body @{ email = $studentUser.email; password = $studentPasswordReset }
 
     $null = Invoke-Api -Method Delete -Path "/api/v1/users/$($studentUser.id)" -Token $adminToken -ExpectedStatus 204
+    $deletedAccounts = Invoke-Api -Method Get -Path "/api/v1/users?lifecycle=deleted&personType=student&search=$suffix" -Token $adminToken
+    if (-not (@($deletedAccounts.items) | Where-Object { $_.id -eq $studentUser.id })) { throw 'La cuenta no apareció en eliminados.' }
+    $currentAccounts = Invoke-Api -Method Get -Path "/api/v1/users?lifecycle=current&personType=student&search=$suffix" -Token $adminToken
+    if (@($currentAccounts.items | Where-Object { $_.id -eq $studentUser.id }).Count -ne 0) { throw 'La cuenta eliminada siguió en el directorio activo.' }
+    $null = Invoke-Api -Method Post -Path '/api/v1/auth/login' -ExpectedStatus 401 -Body @{ email = $studentUser.email; password = $studentPasswordReset }
+    $restoredAccount = Invoke-Api -Method Post -Path "/api/v1/users/$($studentUser.id)/restore" -Token $adminToken
+    if ($restoredAccount.isDeleted -or $restoredAccount.isActive) { throw 'La restauración concedió acceso automáticamente o no quitó la baja.' }
+    $null = Invoke-Api -Method Post -Path '/api/v1/auth/login' -ExpectedStatus 401 -Body @{ email = $studentUser.email; password = $studentPasswordReset }
+    $enabledAccount = Invoke-Api -Method Put -Path "/api/v1/users/$($studentUser.id)/access" -Token $adminToken -Body @{ isActive = $true }
+    if ($enabledAccount.accessStatus -ne 'Active') { throw 'La cuenta restaurada no pudo habilitarse.' }
+    $restoredSession = Invoke-Api -Method Post -Path '/api/v1/auth/login' -Body @{ email = $studentUser.email; password = $studentPasswordReset }
+    $null = Invoke-Api -Method Delete -Path "/api/v1/users/$($studentUser.id)/permanent" -Token $restoredSession.accessToken -ExpectedStatus 403
+    $null = Invoke-Api -Method Put -Path "/api/v1/users/$($studentUser.id)/access" -Token $adminToken -Body @{ isActive = $false }
+    $null = Invoke-Api -Method Post -Path '/api/v1/auth/login' -ExpectedStatus 401 -Body @{ email = $studentUser.email; password = $studentPasswordReset }
+    $null = Invoke-Api -Method Delete -Path "/api/v1/users/$($studentUser.id)" -Token $adminToken -ExpectedStatus 204
+    $null = Invoke-Api -Method Delete -Path "/api/v1/users/$($studentUser.id)/permanent" -Token $adminToken -ExpectedStatus 204
+    $null = Invoke-Api -Method Get -Path "/api/v1/users/$($studentUser.id)" -Token $adminToken -ExpectedStatus 404
+    $null = Invoke-Api -Method Get -Path "/api/v1/documents/$($studentPhotoDocument.id)" -Token $adminToken -ExpectedStatus 404
+    $studentAfterPurge = Invoke-Api -Method Get -Path "/api/v1/students/$($student.id)" -Token $adminToken
+    if ($null -ne $studentAfterPurge.userAccountId) { throw 'La cuenta purgada quedó referenciada por el alumno.' }
 
     $search = Invoke-Api -Method Get -Path "/api/v1/search?term=$suffix" -Token $adminToken
     if ($search.totalCount -lt 2) { throw 'La búsqueda no devolvió cliente y alumno.' }
@@ -887,6 +911,7 @@ try {
         RetentionPreviewSafety = 'OK'
         TokenRotationAndRevocation = 'OK'
         SoftDeletionRestoreAndSessionRevocation = 'OK'
+        UserSuspensionRestoreAndPermanentDeletion = 'OK'
         DocumentVersionHistory = 'OK'
     }
 }

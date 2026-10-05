@@ -72,7 +72,8 @@ public sealed record UserSummaryDto(
     DateOnly? ParticipationStartDate,
     DateOnly? ParticipationEndDate,
     Guid? PhotoDocumentId,
-    IReadOnlyList<string> Roles);
+    IReadOnlyList<string> Roles,
+    string AccessStatus);
 
 public sealed record SetUserPhotoRequest(Guid? DocumentId);
 
@@ -125,9 +126,11 @@ public sealed record UpdateOwnProfileRequest(string FullName, string Email);
 
 public sealed record ResetPasswordRequest(string NewPassword);
 
+public sealed record SetUserAccessRequest(bool IsActive);
+
 public interface IUserManagementService
 {
-    Task<PagedResult<UserSummaryDto>> GetUsersAsync(string? search, int page, int pageSize, CancellationToken cancellationToken);
+    Task<PagedResult<UserSummaryDto>> GetUsersAsync(string? search, string? lifecycle, string? personType, int page, int pageSize, CancellationToken cancellationToken);
 
     Task<UserSummaryDto> GetUserAsync(Guid id, CancellationToken cancellationToken);
 
@@ -136,6 +139,12 @@ public interface IUserManagementService
     Task<UserSummaryDto> UpdateUserAsync(Guid id, UpdateUserRequest request, CancellationToken cancellationToken);
 
     Task DeactivateUserAsync(Guid id, CancellationToken cancellationToken);
+
+    Task<UserSummaryDto> SetAccessAsync(Guid id, SetUserAccessRequest request, CancellationToken cancellationToken);
+
+    Task<UserSummaryDto> RestoreUserAsync(Guid id, CancellationToken cancellationToken);
+
+    Task PurgeUserAsync(Guid id, CancellationToken cancellationToken);
 
     Task AssignRoleAsync(Guid userId, UserRoleAssignmentRequest request, CancellationToken cancellationToken);
 

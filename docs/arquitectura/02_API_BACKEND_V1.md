@@ -32,8 +32,9 @@ Roles iniciales:
 | Secretaria | Operación de clientes, alumnos, expedientes, documentos, actividades y reportes; sin administrar usuarios |
 | Alumno | Perfil propio, catálogos, expedientes asignados, documentos permitidos y memoriales de sus casos |
 
-Los roles y permisos pueden administrarse sin recompilar. La baja de usuario es
-lógica para preservar la autoría histórica.
+  Los roles y permisos pueden administrarse sin recompilar. Las cuentas tienen
+  suspensión, baja lógica, restauración y eliminación definitiva separadas; la
+  autoría histórica de expedientes y actuaciones se conserva.
 
 ## Inventario de recursos
 
@@ -50,13 +51,24 @@ lógica para preservar la autoría histórica.
 ### Usuarios, roles y permisos
 
 - consulta paginada y detalle de usuarios;
-- alta, modificación y baja lógica;
+- alta, modificación, suspensión de acceso, baja lógica, restauración y
+  eliminación definitiva de cuentas dadas de baja;
 - asignación y retiro de roles con vigencia opcional;
 - cambio de contraseña propia y restablecimiento administrativo;
 - consulta, alta y modificación de roles;
 - consulta del catálogo de permisos.
 
 Base: `/api/v1/users` y `/api/v1/roles`.
+
+- `GET /api/v1/users?lifecycle=current|deleted&personType=staff|student&search=...`:
+  directorios separados y paginados; por defecto `current` y todos los tipos
+  de cuenta, para conservar compatibilidad con consumidores existentes.
+- `PUT /api/v1/users/{id}/access`: `{ isActive }`; suspender revoca sesiones.
+- `DELETE /api/v1/users/{id}`: baja lógica, sin borrar autoría.
+- `POST /api/v1/users/{id}/restore`: recupera la ficha con acceso suspendido.
+- `DELETE /api/v1/users/{id}/permanent`: sólo administrador con `users.purge`,
+  únicamente después de la baja lógica; elimina cuenta, tokens y fotografías,
+  desvincula al alumno conservando su ficha y deja auditado el identificador.
 
 ### Clientes y evaluación de ingresos
 

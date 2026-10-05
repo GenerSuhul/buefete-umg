@@ -1,4 +1,5 @@
 using BufeteJuridico.Application.Common;
+using BufeteJuridico.Application.Documents;
 using BufeteJuridico.Application.Identity;
 using BufeteJuridico.Domain.Documents;
 using BufeteJuridico.Domain.Identity;
@@ -11,18 +12,35 @@ namespace BufeteJuridico.Infrastructure.Identity;
 internal sealed class UserManagementService(
     BufeteDbContext dbContext,
     IPasswordHasher<UserAccount> passwordHasher,
+    IFileStorage fileStorage,
     ICurrentUser currentUser,
     TimeProvider timeProvider)
     : IUserManagementService
 {
     public async Task<PagedResult<UserSummaryDto>> GetUsersAsync(
         string? search,
+        string? lifecycle,
+        string? personType,
         int page,
         int pageSize,
         CancellationToken cancellationToken)
     {
         (page, pageSize) = ValidatePage(page, pageSize);
         var query = dbContext.Users.AsNoTracking().Include(item => item.Roles).ThenInclude(item => item.Role).AsQueryable();
+
+        query = lifecycle switch
+        {
+            "deleted" => query.Where(item => item.IsDeleted),
+            "current" or null or "" => query.Where(item => !item.IsDeleted),
+            _ => throw new ValidationException("El estado solicitado no es válido.")
+        };
+        query = personType switch
+        {
+            "student" => query.Where(item => item.Roles.Any(role => role.Role.NormalizedName == "ALUMNO")),
+            "staff" => query.Where(item => !item.Roles.Any(role => role.Role.NormalizedName == "ALUMNO")),
+            null or "" => query,
+            _ => throw new ValidationException("El tipo de usuario solicitado no es válido.")
+        };
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -112,6 +130,11 @@ internal sealed class UserManagementService(
         ValidateUserRequest("existing", request.Email, request.FullName, request.ParticipationStartDate, request.ParticipationEndDate);
         var user = await LoadUserAsync(id, cancellationToken)
             ?? throw new NotFoundException("No se encontró el usuario.");
+        if (user.IsDeleted) throw new ConflictException("Restaure la cuenta antes de modificar sus datos.");
+        if (user.Roles.Any(role => role.Role.NormalizedName == "ALUMNO"))
+            throw new ConflictException("Los datos del alumno se modifican desde su ficha académica.");
+        if (request.IsActive != user.IsActive)
+            throw new ValidationException("Use la acción de acceso para habilitar o suspender esta cuenta.");
 
         var normalizedEmail = TextNormalization.Normalize(request.Email);
         if (await dbContext.Users.AnyAsync(item => item.Id != id && item.NormalizedEmail == normalizedEmail, cancellationToken))
@@ -120,13 +143,21 @@ internal sealed class UserManagementService(
         }
 
         var roles = await GetValidRolesAsync(request.RoleIds, cancellationToken);
+        if (roles.Any(role => role.NormalizedName == "ALUMNO") &&
+            !await dbContext.Students.AnyAsync(item => item.UserAccountId == id, cancellationToken))
+            throw new ConflictException("El rol Alumno requiere una ficha académica vinculada.");
+        if (currentUser.UserId == id && (!request.IsActive || !roles.Any(role => role.NormalizedName == "ADMINISTRADOR")))
+            throw new ConflictException("No puede retirar su propio acceso de administrador.");
+        if (user.IsActive && (!request.IsActive || !roles.Any(role => role.NormalizedName == "ADMINISTRADOR")))
+            await EnsureAnotherActiveAdministratorAsync(user, cancellationToken);
         user.Email = request.Email.Trim();
         user.NormalizedEmail = normalizedEmail;
         user.FullName = request.FullName.Trim();
-        user.IsActive = request.IsActive && !user.IsDeleted;
+        user.IsActive = request.IsActive;
         user.ParticipationStartDate = request.ParticipationStartDate;
         user.ParticipationEndDate = request.ParticipationEndDate;
         user.SecurityStamp = Guid.NewGuid();
+        await RevokeActiveTokensAsync(id, cancellationToken);
 
         dbContext.UserRoles.RemoveRange(user.Roles);
         user.Roles.Clear();
@@ -145,6 +176,8 @@ internal sealed class UserManagementService(
 
         var user = await dbContext.Users.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
             ?? throw new NotFoundException("No se encontró el usuario.");
+        if (user.IsDeleted) throw new ConflictException("La cuenta ya está en eliminados.");
+        await EnsureAnotherActiveAdministratorAsync(user, cancellationToken);
 
         user.IsActive = false;
         user.IsDeleted = true;
@@ -164,6 +197,81 @@ internal sealed class UserManagementService(
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    private async Task EnsureAnotherActiveAdministratorAsync(UserAccount user, CancellationToken cancellationToken)
+    {
+        var isAdministrator = user.Roles.Any(role => role.Role.NormalizedName == "ADMINISTRADOR") ||
+            await dbContext.UserRoles.AnyAsync(role => role.UserId == user.Id && role.Role.NormalizedName == "ADMINISTRADOR", cancellationToken);
+        if (!isAdministrator) return;
+        var anotherExists = await dbContext.Users.AnyAsync(item =>
+            item.Id != user.Id && item.IsActive && !item.IsDeleted &&
+            item.Roles.Any(role => role.Role.NormalizedName == "ADMINISTRADOR"), cancellationToken);
+        if (!anotherExists) throw new ConflictException("Debe permanecer al menos un administrador activo.");
+    }
+
+    public async Task<UserSummaryDto> SetAccessAsync(Guid id, SetUserAccessRequest request, CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId == id && !request.IsActive)
+            throw new ConflictException("No puede suspender su propia cuenta.");
+        var user = await LoadUserAsync(id, cancellationToken)
+            ?? throw new NotFoundException("No se encontró el usuario.");
+        if (user.IsDeleted) throw new ConflictException("Restaure la cuenta antes de cambiar su acceso.");
+        if (request.IsActive)
+        {
+            var student = await dbContext.Students.IgnoreQueryFilters().SingleOrDefaultAsync(item => item.UserAccountId == id, cancellationToken);
+            if (student is { IsActive: false } || student?.DeletedAtUtc is not null)
+                throw new ConflictException("Active primero la ficha del alumno para habilitar su acceso.");
+        }
+        if (user.IsActive && !request.IsActive) await EnsureAnotherActiveAdministratorAsync(user, cancellationToken);
+        user.IsActive = request.IsActive;
+        user.SecurityStamp = Guid.NewGuid();
+        await RevokeActiveTokensAsync(id, cancellationToken);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return Map(user);
+    }
+
+    public async Task<UserSummaryDto> RestoreUserAsync(Guid id, CancellationToken cancellationToken)
+    {
+        var user = await LoadUserAsync(id, cancellationToken)
+            ?? throw new NotFoundException("No se encontró el usuario.");
+        if (!user.IsDeleted) throw new ConflictException("La cuenta no está en eliminados.");
+        user.IsDeleted = false;
+        user.IsActive = false; // Restaurar la ficha no concede acceso automáticamente.
+        user.SecurityStamp = Guid.NewGuid();
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return Map(user);
+    }
+
+    public async Task PurgeUserAsync(Guid id, CancellationToken cancellationToken)
+    {
+        if (currentUser.UserId == id) throw new ConflictException("No puede eliminar definitivamente su propia cuenta.");
+        var user = await LoadUserAsync(id, cancellationToken)
+            ?? throw new NotFoundException("No se encontró el usuario.");
+        if (!user.IsDeleted) throw new ConflictException("Primero envíe la cuenta a eliminados.");
+
+        var linkedStudent = await dbContext.Students.IgnoreQueryFilters().SingleOrDefaultAsync(item => item.UserAccountId == id, cancellationToken);
+        if (linkedStudent is not null)
+        {
+            linkedStudent.UserAccountId = null;
+            linkedStudent.UserAccountWasActiveAtDeletion = null;
+        }
+
+        var photos = await dbContext.Documents
+            .Where(item => item.ContextType == DocumentContextType.UserPhoto && item.ContextId == id)
+            .ToListAsync(cancellationToken);
+        // La cuenta ya está dada de baja. Si falla MinIO no se elimina la fila, para permitir reintentar.
+        foreach (var photo in photos) await fileStorage.DeleteAsync(photo.StorageKey, cancellationToken);
+        foreach (var photo in photos) photo.PreviousVersionId = null;
+        dbContext.Documents.RemoveRange(photos);
+
+        // Se conserva la autoría por GUID, pero no las antiguas instantáneas de datos de la cuenta.
+        var accountAudit = await dbContext.AuditLogs
+            .Where(item => item.EntityType == nameof(UserAccount) && item.EntityId == id.ToString())
+            .ToListAsync(cancellationToken);
+        foreach (var entry in accountAudit) entry.ChangesJson = null;
+        dbContext.Users.Remove(user);
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task AssignRoleAsync(
         Guid userId,
         UserRoleAssignmentRequest request,
@@ -176,6 +284,9 @@ internal sealed class UserManagementService(
             ?? throw new NotFoundException("No se encontró el usuario activo.");
         var role = await dbContext.Roles.SingleOrDefaultAsync(item => item.Id == request.RoleId && item.IsActive, cancellationToken)
             ?? throw new NotFoundException("No se encontró el rol activo.");
+        if (role.NormalizedName == "ALUMNO" &&
+            !await dbContext.Students.AnyAsync(item => item.UserAccountId == userId, cancellationToken))
+            throw new ConflictException("El rol Alumno requiere una ficha académica vinculada.");
         var assignment = user.Roles.SingleOrDefault(item => item.RoleId == request.RoleId);
         if (assignment is null)
         {
@@ -198,12 +309,17 @@ internal sealed class UserManagementService(
 
     public async Task RemoveRoleAsync(Guid userId, Guid roleId, CancellationToken cancellationToken)
     {
-        var user = await dbContext.Users.Include(item => item.Roles)
+        var user = await dbContext.Users.Include(item => item.Roles).ThenInclude(item => item.Role)
             .SingleOrDefaultAsync(item => item.Id == userId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el usuario.");
         var assignment = user.Roles.SingleOrDefault(item => item.RoleId == roleId)
             ?? throw new NotFoundException("El usuario no tiene el rol indicado.");
+        if (assignment.Role.NormalizedName == "ALUMNO" &&
+            await dbContext.Students.AnyAsync(item => item.UserAccountId == userId, cancellationToken))
+            throw new ConflictException("La cuenta vinculada al alumno debe conservar su rol académico.");
         if (user.Roles.Count <= 1) throw new ConflictException("El usuario debe conservar al menos un rol.");
+        if (user.IsActive && assignment.Role.NormalizedName == "ADMINISTRADOR")
+            await EnsureAnotherActiveAdministratorAsync(user, cancellationToken);
         dbContext.UserRoles.Remove(assignment);
         user.SecurityStamp = Guid.NewGuid();
         await RevokeActiveTokensAsync(userId, cancellationToken);
@@ -230,6 +346,7 @@ internal sealed class UserManagementService(
         ValidateUserRequest("existing", request.Email, request.FullName, null, null);
         var user = await LoadUserAsync(userId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el usuario.");
+        if (user.IsDeleted) throw new ConflictException("Restaure la cuenta antes de modificar su perfil.");
         var normalizedEmail = TextNormalization.Normalize(request.Email);
         if (await dbContext.Users.AnyAsync(item => item.Id != userId && item.NormalizedEmail == normalizedEmail, cancellationToken))
             throw new ConflictException("El correo ya está registrado.");
@@ -268,6 +385,7 @@ internal sealed class UserManagementService(
     {
         var user = await LoadUserAsync(userId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el usuario.");
+        if (user.IsDeleted) throw new ConflictException("Restaure la cuenta antes de modificar su fotografía.");
 
         if (request.DocumentId is Guid documentId &&
             !await dbContext.Documents.AnyAsync(item =>
@@ -456,7 +574,7 @@ internal sealed class UserManagementService(
     private static (int Page, int PageSize) ValidatePage(int page, int pageSize) =>
         (Math.Max(1, page), Math.Clamp(pageSize, 1, 100));
 
-    private static UserSummaryDto Map(UserAccount user) => new(
+    private UserSummaryDto Map(UserAccount user) => new(
         user.Id,
         user.Username,
         user.Email,
@@ -466,7 +584,20 @@ internal sealed class UserManagementService(
         user.ParticipationStartDate,
         user.ParticipationEndDate,
         user.PhotoDocumentId,
-        user.Roles.Select(item => item.Role.Name).Order(StringComparer.OrdinalIgnoreCase).ToList());
+        user.Roles.Select(item => item.Role.Name).Order(StringComparer.OrdinalIgnoreCase).ToList(),
+        GetAccessStatus(user));
+
+    private string GetAccessStatus(UserAccount user)
+    {
+        var now = timeProvider.GetUtcNow();
+        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        if (user.IsDeleted) return "Deleted";
+        if (!user.IsActive) return "Suspended";
+        if (user.LockoutEndUtc > now) return "Locked";
+        if (user.ParticipationStartDate > today) return "Scheduled";
+        if (user.ParticipationEndDate < today) return "Expired";
+        return "Active";
+    }
 
     private static RoleDto Map(Role role) => new(
         role.Id,

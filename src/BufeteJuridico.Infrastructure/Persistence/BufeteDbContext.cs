@@ -162,7 +162,8 @@ public sealed class BufeteDbContext(
 
         var changes = new Dictionary<string, object?>();
 
-        foreach (var property in entry.Properties.Where(property => ShouldIncludeProperty(entry, property)))
+        var isAccountPurge = entry.Entity is UserAccount && entry.State == EntityState.Deleted;
+        foreach (var property in entry.Properties.Where(property => !isAccountPurge && ShouldIncludeProperty(entry, property)))
         {
             changes[property.Metadata.Name] = IsSensitiveAuditProperty(property.Metadata.Name)
                 ? "[PROTECTED]"

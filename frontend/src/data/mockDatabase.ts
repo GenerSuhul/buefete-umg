@@ -852,6 +852,7 @@ export const users: UserSummary[] = [
     participationEndDate: null,
     photoDocumentId: null,
     roles: ["AdministradorGeneral"],
+    accessStatus: "Active",
   },
   {
     id: ids.secretary,
@@ -864,6 +865,7 @@ export const users: UserSummary[] = [
     participationEndDate: "2026-12-15",
     photoDocumentId: null,
     roles: ["Secretaria"],
+    accessStatus: "Active",
   },
   {
     id: "40000000-0000-0000-0000-000000000003",
@@ -876,6 +878,7 @@ export const users: UserSummary[] = [
     participationEndDate: "2026-11-30",
     photoDocumentId: null,
     roles: ["Secretaria"],
+    accessStatus: "Active",
   },
 ];
 

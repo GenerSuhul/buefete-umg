@@ -420,6 +420,7 @@ export interface UserSummary {
   participationEndDate: string | null;
   photoDocumentId: Id | null;
   roles: string[];
+  accessStatus: "Active" | "Suspended" | "Scheduled" | "Expired" | "Locked" | "Deleted";
 }
 
 export interface Role {

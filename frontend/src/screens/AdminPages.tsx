@@ -1,5 +1,6 @@
 import {
   ArchiveRestore,
+  Ban,
   BookKey,
   FileClock,
   KeyRound,
@@ -9,9 +10,10 @@ import {
   ShieldAlert,
   ShieldCheck,
   Trash2,
+  UserCheck,
 } from "lucide-react";
-import { useCallback, useState } from "react";
-import { Pagination, RelationLookup } from "../components/domain/Shared";
+import { useState } from "react";
+import { Pagination } from "../components/domain/Shared";
 import {
   Avatar,
   Badge,
@@ -30,6 +32,7 @@ import {
 import { dataSource } from "../data/dataSource";
 import { useAsyncData } from "../hooks/useAsyncData";
 import { useConfirm, useNotify } from "../components/ui/Feedback";
+import { useAuth } from "../context/AuthContext";
 import type {
   ProcessType,
   RequirementDefinition,
@@ -41,11 +44,9 @@ import { isValidPassword } from "../utils/passwordPolicy";
 
 const emptyUserForm = {
   fullName: "",
-  username: "",
   email: "",
   password: "",
   roleIds: [] as string[],
-  studentId: "",
   participationStartDate: toLocalDateOnly(),
   participationEndDate: "",
   isActive: true,
@@ -54,7 +55,14 @@ const emptyUserForm = {
 export function UsersPage() {
   const confirm = useConfirm();
   const notify = useNotify();
+  const { user: signedInUser } = useAuth();
   const [page, setPage] = useState(1);
+  const [lifecycle, setLifecycle] = useState<"current" | "deleted">("current");
+  const [personType, setPersonType] = useState<"staff" | "student">("staff");
+  const [searchDraft, setSearchDraft] = useState("");
+  const [search, setSearch] = useState("");
+  const [purgeTarget, setPurgeTarget] = useState<UserSummary | null>(null);
+  const [purgeConfirmation, setPurgeConfirmation] = useState("");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<UserSummary | null>(null);
   const [form, setForm] = useState(emptyUserForm);
@@ -64,15 +72,10 @@ export function UsersPage() {
   const [passwordUser, setPasswordUser] = useState<UserSummary | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const { data, error, loading, reload } = useAsyncData(
-    () => dataSource.listUsers({ page, pageSize: 25 }),
-    [page],
+    () => dataSource.listUsers({ page, pageSize: 25, lifecycle, personType, search }),
+    [page, lifecycle, personType, search],
   );
   const rolesState = useAsyncData(() => dataSource.listRoles(), []);
-  const loadUnlinkedStudents = useCallback(async (term: string) => (await dataSource.listStudents({ search: term, pageSize: 20 })).items.filter((student) => !student.userAccountId).map((student) => ({ value: student.id, label: `${student.fullName} · ${student.studentCardNumber}` })), []);
-  const studentRole = rolesState.data?.find((role) => role.name === "Alumno");
-  const isStudentRole = Boolean(
-    studentRole && form.roleIds.includes(studentRole.id),
-  );
 
   const startCreate = () => {
     setEditing(null);
@@ -86,14 +89,12 @@ export function UsersPage() {
     setEditing(user);
     setForm({
       fullName: user.fullName,
-      username: user.username,
       email: user.email,
       password: "",
       roleIds:
         rolesState.data
           ?.filter((role) => user.roles.includes(role.name))
           .map((role) => role.id) ?? [],
-      studentId: "",
       participationStartDate: user.participationStartDate ?? "",
       participationEndDate: user.participationEndDate ?? "",
       isActive: user.isActive,
@@ -120,24 +121,21 @@ export function UsersPage() {
         roleIds: form.roleIds,
       };
       const wasEditing = Boolean(editing);
-      const reactivating = Boolean(editing && !editing.isActive && form.isActive);
       await notify.track((async () => {
         const result = editing
           ? await dataSource.updateUser(editing.id, common)
           : await dataSource.createUser({
               ...common,
-              username: form.username.trim(),
+              username: form.email.trim(),
               password: form.password,
-              studentId: isStudentRole ? form.studentId : null,
+              studentId: null,
             });
         if (photo) await dataSource.setUserPhoto(result.id, photo);
         await reload();
         return result;
       })(), {
-        loading: { title: reactivating ? "Reactivando usuario…" : wasEditing ? "Guardando usuario…" : "Creando usuario…" },
-        success: (result) => reactivating
-          ? { title: "Usuario reactivado", message: `El acceso de ${result.fullName} fue habilitado nuevamente.` }
-          : { title: wasEditing ? "Usuario actualizado" : "Usuario creado", message: wasEditing ? `Los datos de ${result.fullName} fueron actualizados.` : `${result.fullName} ya puede acceder al sistema.` },
+        loading: { title: wasEditing ? "Guardando usuario…" : "Creando usuario…" },
+        success: (result) => ({ title: wasEditing ? "Usuario actualizado" : "Usuario creado", message: wasEditing ? `Los datos de ${result.fullName} fueron actualizados.` : `${result.fullName} ya puede acceder al sistema.` }),
         error: { title: wasEditing ? "No se pudo actualizar el usuario" : "No se pudo crear el usuario" },
       });
       setOpen(false);
@@ -153,11 +151,55 @@ export function UsersPage() {
   };
 
   const deactivate = async (user: UserSummary) => {
-    if (!await confirm({ title: "Desactivar usuario", message: `${user.fullName} no podrá iniciar sesión. Su historial permanecerá disponible.`, confirmLabel: "Desactivar", tone: "danger" })) return;
+    if (!await confirm({ title: "Enviar cuenta a eliminados", message: `${user.fullName} perderá el acceso. La cuenta podrá restaurarse y el historial permanecerá disponible.`, confirmLabel: "Enviar a eliminados", tone: "danger" })) return;
     try {
-      await dataSource.deactivateUser(user.id);
-      await reload();
+      await notify.track(dataSource.deactivateUser(user.id), {
+        loading: { title: "Moviendo cuenta…" },
+        success: { title: "Cuenta en eliminados", message: `${user.fullName} ya no puede acceder.` },
+        error: { title: "No se pudo eliminar la cuenta" },
+      });
+      reload();
     } catch { /* El sistema global conserva el error y el registro permanece visible. */ }
+  };
+
+  const changeAccess = async (user: UserSummary) => {
+    const activate = !user.isActive;
+    if (!activate && !await confirm({ title: "Suspender acceso", message: `${user.fullName} no podrá iniciar sesión hasta que se vuelva a habilitar.`, confirmLabel: "Suspender acceso", tone: "danger" })) return;
+    try {
+      await notify.track(dataSource.setUserAccess(user.id, activate), {
+        loading: { title: activate ? "Habilitando acceso…" : "Suspendiendo acceso…" },
+        success: { title: activate ? "Acceso habilitado" : "Acceso suspendido" },
+        error: { title: "No se pudo cambiar el acceso" },
+      });
+      reload();
+    } catch { /* El diálogo de error muestra la causa. */ }
+  };
+
+  const restore = async (user: UserSummary) => {
+    try {
+      await notify.track(dataSource.restoreUser(user.id), {
+        loading: { title: "Restaurando cuenta…" },
+        success: { title: "Cuenta restaurada", message: "El acceso permanece suspendido hasta habilitarlo expresamente." },
+        error: { title: "No se pudo restaurar la cuenta" },
+      });
+      reload();
+    } catch { /* El diálogo de error muestra la causa. */ }
+  };
+
+  const purge = async () => {
+    if (!purgeTarget || purgeConfirmation !== purgeTarget.email) return;
+    setBusy(true);
+    try {
+      await notify.track(dataSource.purgeUser(purgeTarget.id), {
+        loading: { title: "Eliminando cuenta…" },
+        success: { title: "Cuenta eliminada definitivamente" },
+        error: { title: "No se pudo eliminar la cuenta" },
+      });
+      setPurgeTarget(null);
+      setPurgeConfirmation("");
+      reload();
+    } catch { /* La cuenta continúa en eliminados. */ }
+    finally { setBusy(false); }
   };
 
   const resetPassword = async (user: UserSummary) => {
@@ -182,26 +224,41 @@ export function UsersPage() {
       <PageHeader
         eyebrow="Identidad y acceso"
         title="Accesos y personal"
-        description="Cuentas, fotografía, períodos de participación y roles autorizados."
-        actions={
+        description="Cuentas de personal, acceso de alumnos y bajas recuperables."
+        actions={lifecycle === "current" && personType === "staff" ?
           <Button onClick={startCreate}>
             <Plus size={18} />
-            Crear usuario
+            Crear personal
           </Button>
-        }
+        : undefined}
       />
       <Card>
         <SectionHeading
-          title="Directorio de usuarios"
-          description="Los usuarios desactivados conservan toda su autoría histórica"
+          title={lifecycle === "deleted" ? "Cuentas eliminadas" : personType === "staff" ? "Personal" : "Acceso de alumnos"}
+          description={lifecycle === "deleted" ? "Restaure una cuenta o elimínela definitivamente." : personType === "student" ? "Los datos académicos se administran en Alumnos." : "Administre identidad, roles y vigencia del personal."}
         />
+        <div className="user-directory-toolbar">
+          <div className="user-directory-tabs" role="group" aria-label="Tipo de cuenta">
+            <Button variant={personType === "staff" ? "primary" : "secondary"} aria-pressed={personType === "staff"} onClick={() => { setPersonType("staff"); setPage(1); }}>Personal</Button>
+            <Button variant={personType === "student" ? "primary" : "secondary"} aria-pressed={personType === "student"} onClick={() => { setPersonType("student"); setPage(1); }}>Alumnos</Button>
+          </div>
+          <div className="user-directory-tabs" role="group" aria-label="Estado de la cuenta">
+            <Button variant={lifecycle === "current" ? "primary" : "secondary"} aria-pressed={lifecycle === "current"} onClick={() => { setLifecycle("current"); setPage(1); }}>Cuentas actuales</Button>
+            <Button variant={lifecycle === "deleted" ? "primary" : "secondary"} aria-pressed={lifecycle === "deleted"} onClick={() => { setLifecycle("deleted"); setPage(1); }}>Eliminados</Button>
+          </div>
+          <form className="user-directory-search" onSubmit={(event) => { event.preventDefault(); setSearch(searchDraft.trim()); setPage(1); }}>
+            <label className="sr-only" htmlFor="user-directory-search">Buscar por nombre o correo</label>
+            <input id="user-directory-search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Nombre o correo" />
+            <Button variant="secondary" type="submit">Buscar</Button>
+          </form>
+        </div>
         {loading ? (
           <LoadingState />
         ) : error ? (
           <ErrorState error={error} retry={reload} />
         ) : (
           <>
-            <div className="admin-list">
+            <div className="admin-list user-directory-list">
               {data?.items.map((user) => (
               <article key={user.id}>
                 <Avatar
@@ -212,7 +269,7 @@ export function UsersPage() {
                 <div>
                   <strong>{user.fullName}</strong>
                   <small>
-                    @{user.username} · {user.email}
+                    {user.email}
                   </small>
                 </div>
                 <span>
@@ -221,43 +278,50 @@ export function UsersPage() {
                     {formatDate(user.participationStartDate)} –{" "}
                     {user.participationEndDate
                       ? formatDate(user.participationEndDate)
-                      : "vigente"}
+                      : "sin fecha de fin"}
                   </small>
                 </span>
-                <Badge tone={user.isActive ? "success" : "neutral"}>
-                  {user.isActive ? "Activo" : "Inactivo"}
+                <Badge tone={user.accessStatus === "Active" ? "success" : user.accessStatus === "Deleted" ? "danger" : "neutral"}>
+                  {({ Active: "Activo", Suspended: "Suspendido", Scheduled: "Programado", Expired: "Vigencia finalizada", Locked: "Bloqueado", Deleted: "Eliminado" } as const)[user.accessStatus] ?? "Sin acceso"}
                 </Badge>
                 <div className="inline-actions">
+                  {user.isDeleted ? <>
+                    <Button variant="secondary" onClick={() => restore(user)}><ArchiveRestore size={16} /> Restaurar</Button>
+                    <Button variant="ghost" onClick={() => { setPurgeTarget(user); setPurgeConfirmation(""); }}><Trash2 size={16} /> Eliminar definitivamente</Button>
+                  </> : <>
+                  {personType === "staff" &&
                   <Button
                     variant="ghost"
-                    size="icon"
                     aria-label={`Editar ${user.fullName}`}
                     onClick={() => startEdit(user)}
                   >
-                    <Pencil size={17} />
-                  </Button>
+                    <Pencil size={17} /> Editar
+                  </Button>}
                   <Button
                     variant="ghost"
-                    size="icon"
                     aria-label={`Restablecer contraseña de ${user.fullName}`}
                     onClick={() => resetPassword(user)}
                   >
-                    <KeyRound size={17} />
+                    <KeyRound size={17} /> Contraseña
                   </Button>
-                  {user.isActive && (
+                  {user.id !== signedInUser?.id && <>
+                    <Button variant="ghost" onClick={() => changeAccess(user)} aria-label={`${user.isActive ? "Suspender" : "Habilitar"} acceso de ${user.fullName}`}>
+                      {user.isActive ? <Ban size={17} /> : <UserCheck size={17} />}{user.isActive ? "Suspender" : "Habilitar"}
+                    </Button>
                     <Button
                       variant="ghost"
-                      size="icon"
-                      aria-label={`Desactivar ${user.fullName}`}
+                      aria-label={`Enviar a eliminados a ${user.fullName}`}
                       onClick={() => deactivate(user)}
                     >
-                      <Trash2 size={17} />
+                      <Trash2 size={17} /> Eliminar
                     </Button>
-                  )}
+                  </>}
+                  </>}
                 </div>
               </article>
               ))}
             </div>
+            {data?.items.length === 0 && <p className="user-directory-empty">No hay cuentas para estos filtros.</p>}
             {data ? <Pagination page={data.page} totalPages={data.totalPages} totalCount={data.totalCount} onPageChange={setPage} /> : null}
           </>
         )}
@@ -282,10 +346,7 @@ export function UsersPage() {
                 !form.fullName ||
                 !form.email ||
                 !form.roleIds.length ||
-                (!editing &&
-                  (!form.username ||
-                    !isValidPassword(form.password) ||
-                    (isStudentRole && !form.studentId)))
+                (!editing && !isValidPassword(form.password))
               }
               onClick={submit}
             >
@@ -305,7 +366,7 @@ export function UsersPage() {
         )}
         <FilePicker
           label="Seleccionar fotografía"
-          hint="PNG, JPG o WEBP · documento privado"
+          hint="PNG, JPG o WEBP · fotografía de perfil"
           file={photo}
           onChange={setPhoto}
           accept="image/png,image/jpeg,image/webp"
@@ -316,15 +377,6 @@ export function UsersPage() {
               value={form.fullName}
               onChange={(event) =>
                 setForm({ ...form, fullName: event.target.value })
-              }
-            />
-          </Field>
-          <Field label="Usuario">
-            <input
-              value={form.username}
-              disabled={!!editing}
-              onChange={(event) =>
-                setForm({ ...form, username: event.target.value })
               }
             />
           </Field>
@@ -364,7 +416,7 @@ export function UsersPage() {
               }
             >
               {rolesState.data
-                ?.filter((role) => role.isActive)
+                ?.filter((role) => role.isActive && role.name !== "Alumno")
                 .map((role) => (
                   <option key={role.id} value={role.id}>
                     {role.name}
@@ -372,12 +424,6 @@ export function UsersPage() {
                 ))}
             </Select>
           </Field>
-          {!editing && isStudentRole && (
-            <RelationLookup label="Alumno vinculado" required value={form.studentId} load={loadUnlinkedStudents} emptyLabel="Seleccione un alumno sin cuenta" onChange={(studentId) => {
-              setForm((current) => ({ ...current, studentId }));
-              if (studentId) void dataSource.getStudent(studentId).then(({ student }) => setForm((current) => current.studentId === studentId ? { ...current, fullName: student.fullName, email: student.email } : current));
-            }} />
-          )}
           <DateRangePickerField
             label="Vigencia de participación"
             startValue={form.participationStartDate}
@@ -386,19 +432,6 @@ export function UsersPage() {
               setForm({ ...form, participationStartDate, participationEndDate })
             }
           />
-          {editing && (
-            <Field label="Estado">
-              <Select
-                value={String(form.isActive)}
-                onChange={(event) =>
-                  setForm({ ...form, isActive: event.target.value === "true" })
-                }
-              >
-                <option value="true">Activo</option>
-                <option value="false">Inactivo</option>
-              </Select>
-            </Field>
-          )}
         </div>
       </Modal>
       <Modal
@@ -410,6 +443,23 @@ export function UsersPage() {
       >
         <Field label="Nueva contraseña" hint="Entre 8 y 128 caracteres.">
           <input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+        </Field>
+      </Modal>
+      <Modal
+        open={purgeTarget !== null}
+        onClose={() => !busy && setPurgeTarget(null)}
+        title="Eliminar cuenta definitivamente"
+        description="Esta acción no se puede deshacer. El expediente y la autoría histórica permanecen, pero la cuenta y sus fotografías se eliminan."
+        footer={<>
+          <Button variant="secondary" disabled={busy} onClick={() => setPurgeTarget(null)}>Cancelar</Button>
+          <Button variant="danger" disabled={busy || purgeConfirmation !== purgeTarget?.email} onClick={purge}>
+            {busy ? "Eliminando…" : "Eliminar definitivamente"}
+          </Button>
+        </>}
+      >
+        <p className="user-purge-warning">Para confirmar, escriba el correo de la cuenta: <strong>{purgeTarget?.email}</strong></p>
+        <Field label="Correo de confirmación">
+          <input value={purgeConfirmation} onChange={(event) => setPurgeConfirmation(event.target.value)} autoComplete="off" />
         </Field>
       </Modal>
     </>

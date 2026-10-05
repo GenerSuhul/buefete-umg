@@ -36,8 +36,14 @@ procesos funcionales del bufete.
 ### DP-03. Significado de “eliminar usuario”
 
 **Lo confirmado:** el administrador puede eliminar y las secretarías no.  
-**Resuelto para versión 1:** eliminar significa baja lógica. Se bloquea el acceso
-y se conserva el perfil mínimo y toda su autoría histórica.
+**Actualizado el 5 de octubre de 2026 por solicitud del propietario:** se
+distinguen suspensión de acceso, baja lógica recuperable y eliminación definitiva
+de la cuenta. Sólo administración puede ejecutarlas. Restaurar una cuenta no
+habilita el acceso automáticamente. La eliminación definitiva requiere que la
+cuenta esté previamente en eliminados y confirmación expresa; borra credenciales,
+roles, sesiones, ficha de acceso y fotografías del contexto de la cuenta, pero
+no elimina alumnos, expedientes, documentos jurídicos ni la autoría auditada.
+Una política institucional de retención de datos históricos sigue pendiente.
 
 ### DP-04. Lista oficial de procesos y documentos
 

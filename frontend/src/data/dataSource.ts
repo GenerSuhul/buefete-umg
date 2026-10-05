@@ -81,6 +81,11 @@ interface ListOptions {
   pageSize?: number;
 }
 
+interface UserListOptions extends ListOptions {
+  lifecycle?: "current" | "deleted";
+  personType?: "staff" | "student";
+}
+
 export interface DataSource {
   readonly mode: "mock" | "api";
   getPlatformHealth(): Promise<PlatformHealth>;
@@ -241,11 +246,14 @@ export interface DataSource {
     subject: string,
     message?: string,
   ): Promise<WeeklyReport>;
-  listUsers(options?: ListOptions): Promise<PagedResult<UserSummary>>;
+  listUsers(options?: UserListOptions): Promise<PagedResult<UserSummary>>;
   listRoles(): Promise<Role[]>;
   createUser(input: CreateUserInput): Promise<UserSummary>;
   updateUser(id: string, input: UserWriteInput): Promise<UserSummary>;
   deactivateUser(id: string): Promise<void>;
+  setUserAccess(id: string, isActive: boolean): Promise<UserSummary>;
+  restoreUser(id: string): Promise<UserSummary>;
+  purgeUser(id: string): Promise<void>;
   resetUserPassword(id: string, password: string): Promise<void>;
   setUserPhoto(id: string, file: File): Promise<UserSummary>;
   getCurrentUser(): Promise<UserSummary>;
@@ -1054,15 +1062,12 @@ class MockDataSource implements DataSource {
     return clone(report);
   }
 
-  async listUsers(options: ListOptions = {}) {
+  async listUsers(options: UserListOptions = {}) {
     await wait();
-    const filtered = options.search
-      ? users.filter(
-          (item) =>
-            includes(item.fullName, options.search!) ||
-            includes(item.username, options.search!),
-        )
-      : users;
+    const filtered = users.filter((item) =>
+      (options.lifecycle === "deleted" ? item.isDeleted : !item.isDeleted) &&
+      (options.personType === "student" ? item.roles.includes("Alumno") : options.personType === "staff" ? !item.roles.includes("Alumno") : true) &&
+      (!options.search || includes(item.fullName, options.search) || includes(item.email, options.search)));
     return clone(page(filtered, options));
   }
   async listRoles() {
@@ -1084,6 +1089,7 @@ class MockDataSource implements DataSource {
       roles: mockRoles
         .filter((role) => input.roleIds.includes(role.id))
         .map((role) => role.name),
+      accessStatus: "Active",
     };
     users.unshift(created);
     return clone(created);
@@ -1093,6 +1099,7 @@ class MockDataSource implements DataSource {
     const user = users.find((item) => item.id === id);
     if (!user) throw new Error("Usuario no encontrado.");
     Object.assign(user, input, {
+      accessStatus: input.isActive ? "Active" : "Suspended",
       roles: mockRoles
         .filter((role) => input.roleIds.includes(role.id))
         .map((role) => role.name),
@@ -1102,7 +1109,30 @@ class MockDataSource implements DataSource {
   async deactivateUser(id: string) {
     await wait();
     const user = users.find((item) => item.id === id);
-    if (user) user.isActive = false;
+    if (user) { user.isActive = false; user.isDeleted = true; user.accessStatus = "Deleted"; }
+  }
+  async setUserAccess(id: string, isActive: boolean) {
+    await wait();
+    const user = users.find((item) => item.id === id);
+    if (!user || user.isDeleted) throw new Error("La cuenta no está disponible.");
+    user.isActive = isActive;
+    user.accessStatus = isActive ? "Active" : "Suspended";
+    return clone(user);
+  }
+  async restoreUser(id: string) {
+    await wait();
+    const user = users.find((item) => item.id === id);
+    if (!user || !user.isDeleted) throw new Error("La cuenta no está en eliminados.");
+    user.isDeleted = false;
+    user.isActive = false;
+    user.accessStatus = "Suspended";
+    return clone(user);
+  }
+  async purgeUser(id: string) {
+    await wait();
+    const index = users.findIndex((item) => item.id === id && item.isDeleted);
+    if (index < 0) throw new Error("La cuenta no está en eliminados.");
+    users.splice(index, 1);
   }
   async resetUserPassword() {
     await wait();
@@ -1932,7 +1962,7 @@ class ApiDataSource implements DataSource {
     this.updateReportCache(report);
     return report;
   }
-  listUsers(options: ListOptions = {}) {
+  listUsers(options: UserListOptions = {}) {
     return this.api.request<PagedResult<UserSummary>>(
       `/users?${query(options)}`,
     );
@@ -1954,6 +1984,15 @@ class ApiDataSource implements DataSource {
   }
   deactivateUser(id: string) {
     return this.api.request<void>(`/users/${id}`, { method: "DELETE" });
+  }
+  setUserAccess(id: string, isActive: boolean) {
+    return this.api.request<UserSummary>(`/users/${id}/access`, { method: "PUT", body: JSON.stringify({ isActive }) });
+  }
+  restoreUser(id: string) {
+    return this.api.request<UserSummary>(`/users/${id}/restore`, { method: "POST" });
+  }
+  purgeUser(id: string) {
+    return this.api.request<void>(`/users/${id}/permanent`, { method: "DELETE" });
   }
   resetUserPassword(id: string, password: string) {
     return this.api.request<void>(`/users/${id}/reset-password`, {
