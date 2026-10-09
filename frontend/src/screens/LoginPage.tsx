@@ -7,6 +7,7 @@ import { humanizeOperationError } from '../components/ui/feedback/feedbackBus';
 import { motion } from '../components/ui/motion/motion';
 import { useAuth } from '../context/AuthContext';
 import { dataSource } from '../data/dataSource';
+import { demoEnabled } from '../demo/client';
 
 export function LoginPage() {
   const [email, setEmail] = useState(dataSource.mode === 'mock' ? 'admin.bufete@umg.edu.gt' : '');
@@ -31,7 +32,7 @@ export function LoginPage() {
     try {
       await login(email, password);
       setStatus('success');
-      notify.success({ title: 'Acceso concedido', message: 'Bienvenido al Bufete Popular UMG, sede Petén.', duration: 3500 });
+      notify.success({ title: 'Acceso concedido', message: demoEnabled?'Bienvenido al Bufete Popular UMG.':'Bienvenido al Bufete Popular UMG, sede Petén.', duration: 3500 });
       const button = formRef.current?.querySelector<HTMLElement>('.button');
       const animations = [shellRef.current ? motion.loginExit(shellRef.current).finished : Promise.resolve(), button ? motion.successPulse(button).finished : Promise.resolve()];
       await Promise.all(animations);
@@ -69,6 +70,7 @@ export function LoginPage() {
             <img className="login-logo" src="/umg.png" alt="Universidad Mariano Gálvez" />
             <div><small>ACCESO INTERNO</small><h2>Bienvenido</h2><p>Ingrese con sus credenciales autorizadas.</p></div>
           </header>
+          {demoEnabled && <p className="login-demo-note"><strong>Entorno de demostración</strong><br/>Use únicamente datos ficticios. La información de esta demo está separada del sistema de producción.</p>}
           <div className="login-fields">
             <Field label="Correo electrónico">
               <span className="input-with-icon"><UserRound size={18} /><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" autoFocus /></span>

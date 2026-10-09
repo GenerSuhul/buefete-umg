@@ -560,7 +560,7 @@ export interface RequirementDefinition {
   processTypeId: Id | null;
   code: string;
   label: string;
-  kind: 'Document' | 'Data';
+  kind: 'Document' | 'Data' | 'Condition';
   isRequired: boolean;
   isConditional: boolean;
   conditionDescription: string | null;

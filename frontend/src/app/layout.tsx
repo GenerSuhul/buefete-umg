@@ -4,6 +4,7 @@ import { Providers } from "./providers";
 import '@fontsource-variable/manrope';
 import '@daypicker/react/style.css';
 import '../styles/global.css';
+import '../styles/demo.css';
 import '../styles/dashboard.css';
 import '../styles/directory.css';
 import '../styles/profile.css';

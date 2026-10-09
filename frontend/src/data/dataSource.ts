@@ -35,6 +35,7 @@ import { hasOperationFeedback, isOperationFeedbackHandled, withOperationFeedback
 import { humanizeOperationError } from "../components/ui/feedback/feedbackBus";
 import { readAuthSession, writeAuthSession } from "./authSession";
 import mockData from "./testFixtures";
+import { createDemoSource, demoEnabled } from "../demo/client";
 const mockMode = process.env.NODE_ENV === "test";
 const activities = mockData?.activities ?? [];
 const auditLogs = mockData?.auditLogs ?? [];
@@ -2178,7 +2179,7 @@ function query(values: object) {
 
 const source: DataSource = mockMode
   ? new MockDataSource()
-  : new ApiDataSource();
+  : demoEnabled ? createDemoSource() : new ApiDataSource();
 
 export const dataSource: DataSource = new Proxy(source, {
   get(target, property) {

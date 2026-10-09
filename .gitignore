@@ -40,3 +40,7 @@ logs/
 .docker-sandbox/
 .dotnet-cli-home/
 tmp/
+.vercel/
+frontend/.agents/
+frontend/skills-lock.json
+output/

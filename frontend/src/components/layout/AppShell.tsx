@@ -25,6 +25,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NavLink, useLocation, useNavigate } from "../../routing/navigation";
 import { useAuth } from "../../context/AuthContext";
 import { dataSource } from "../../data/dataSource";
+import { demoEnabled } from "../../demo/client";
+import { WorkspaceBanner } from "../../demo/WorkspaceBanner";
 import { useAsyncData } from "../../hooks/useAsyncData";
 import type { SearchResult } from "../../types/domain";
 import { translate } from "../../utils/format";
@@ -160,6 +162,7 @@ const navigationGroups: NavigationGroup[] = [
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const [workspaceName,setWorkspaceName]=useState('Verificando sede…');
   const pageRef = useRef<HTMLElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -273,7 +276,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <img src="/umg.png" alt="Universidad Mariano Gálvez" />
             <span>
               <strong>Bufete Popular UMG</strong>
-              <small>Sede Petén</small>
+              <small>{demoEnabled?workspaceName:'Sede Petén'}</small>
             </span>
             <IconButton
               label="Cerrar navegación"
@@ -471,6 +474,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
         <main className="page-content" ref={pageRef}>
+          {demoEnabled && <WorkspaceBanner onWorkspaceName={setWorkspaceName} />}
           {children}
         </main>
         {canGlobalSearch && (
@@ -529,6 +533,7 @@ function getBreadcrumb(pathname: string) {
   if (pathname === "/personas/alumnos")
     return { section: "Práctica académica", page: "Alumnos" };
   const known: Record<string, { section: string; page: string }> = {
+    "/sedes": { section: "Demo / Organización", page: "Bufetes y sedes" },
     "/documentos": { section: "Gestión jurídica", page: "Archivo digital" },
     "/actividades": { section: "Operación interna", page: "Actividades" },
     "/reportes": { section: "Operación interna", page: "Reportes" },
