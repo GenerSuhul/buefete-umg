@@ -129,6 +129,7 @@ else
 }
 app.UseCors("Frontend");
 app.UseRateLimiter();
+app.UseMiddleware<TenantSelectionMiddleware>();
 app.UseAuthentication();
 app.UseMiddleware<RequestAuditMiddleware>();
 app.UseAuthorization();

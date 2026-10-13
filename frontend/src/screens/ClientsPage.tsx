@@ -28,6 +28,8 @@ import {
   Select,
 } from "../components/ui";
 import { dataSource } from "../data/dataSource";
+import { clientRestrictions } from '../data/clientRestrictions';
+import { demoEnabled } from '../demo/client';
 import { feedbackHandled } from "../components/ui/feedback/operationFeedback";
 import { useNotify } from "../components/ui/Feedback";
 import { useAsyncData } from "../hooks/useAsyncData";
@@ -167,11 +169,18 @@ export function ClientsPage() {
     return null;
   };
 
-  const next = () => {
+  const next = async () => {
     const message = validateStep();
     if (message) {
       setFormError(message);
       return;
+    }
+    if (step === 0 && !demoEnabled) {
+      setBusy(true);
+      try {
+        if ((await clientRestrictions.check(form.dpi)).isRestricted) { setFormError('Atención bloqueada: este DPI tiene un veto global permanente en todas las sedes.'); return; }
+      } catch (cause) { setFormError(cause instanceof Error ? cause.message : 'No se pudo verificar el DPI. Intente nuevamente.'); return; }
+      finally { setBusy(false); }
     }
     setFormError(null);
     setStep((current) => Math.min(current + 1, steps.length - 1));

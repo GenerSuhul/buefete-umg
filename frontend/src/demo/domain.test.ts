@@ -83,6 +83,20 @@ describe("Dominio aislado de demo", () => {
     ).toThrow(/requisitos/);
     expect(r.enrollment.requirements).toHaveLength(9);
   });
+  it('edita la práctica vinculada sin permitir cambios parciales inválidos', () => {
+    const { run } = setup();
+    const r = run('registerStudent', {
+      student: { fullName: 'Alumno práctica', email: 'practica@example.test', studentCardNumber: '1690-26-00300', dpi: '0000000000000', registrationDate: '2026-10-09', residenceAddress: 'Prueba' },
+      enrollment: { modality: 'CivilFamilyCases', initialStatus: 'Submitted', siteName: 'Petén' }, access: { password: 'Ejemplo26' },
+    }) as StudentRegistration;
+    const practice = { ...r.enrollment, enrollmentId: r.enrollment.id, practiceDays: 'Lunes', siteName: 'Otra sede' };
+    run('updateStudent', r.student.id, { concurrencyToken: r.student.concurrencyToken, practice });
+    expect(r.enrollment.practiceDays).toBe('Lunes');
+    expect(r.enrollment.siteName).toBe('Petén');
+    expect(() => run('updateStudent', r.student.id, { concurrencyToken: r.student.concurrencyToken, practice })).toThrow(/cambió/);
+    expect(() => run('updateStudent', r.student.id, { fullName: 'No guardar', practice: { ...practice, concurrencyToken: r.enrollment.concurrencyToken, startTime: '12:00', endTime: '08:00' } })).toThrow(/hora final/);
+    expect(r.student.fullName).toBe('Alumno práctica');
+  });
   it("eliminación lógica y restauración preservan la ficha", () => {
     const { run } = setup(),
       c = run("createClient", person) as Client;

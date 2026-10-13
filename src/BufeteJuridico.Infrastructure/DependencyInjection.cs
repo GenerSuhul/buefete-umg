@@ -23,6 +23,7 @@ using BufeteJuridico.Infrastructure.Operations;
 using BufeteJuridico.Infrastructure.Persistence;
 using BufeteJuridico.Infrastructure.Queries;
 using BufeteJuridico.Infrastructure.Students;
+using BufeteJuridico.Infrastructure.Tenancy;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -78,8 +79,11 @@ public static class DependencyInjection
         var storage = configuration.GetSection(StorageOptions.SectionName).Get<StorageOptions>() ?? new StorageOptions();
         ConfigureStorage(services, storage);
 
-        services.AddDbContext<BufeteDbContext>(options =>
-            options.UseNpgsql(connectionString, postgresOptions =>
+        services.AddScoped<TenantContext>();
+        services.AddScoped<TenantRegistry>();
+        services.AddScoped<ITenantManagementService>(provider => provider.GetRequiredService<TenantRegistry>());
+        services.AddDbContext<BufeteDbContext>((provider, options) =>
+            options.UseNpgsql(provider.GetRequiredService<TenantContext>().ConnectionString, postgresOptions =>
             {
                 postgresOptions.CommandTimeout(30);
                 postgresOptions.EnableRetryOnFailure(5, TimeSpan.FromSeconds(10), null);
@@ -90,6 +94,7 @@ public static class DependencyInjection
         services.AddScoped<IAuthenticationService, AuthenticationService>();
         services.AddScoped<IUserManagementService, UserManagementService>();
         services.AddScoped<IClientService, ClientService>();
+        services.AddScoped<IClientRestrictionService, ClientRestrictionService>();
         services.AddScoped<IStudentService, StudentService>();
         services.AddScoped<ICatalogService, CatalogService>();
         services.AddScoped<ICaseService, CaseService>();
@@ -127,7 +132,7 @@ public static class DependencyInjection
         {
             if (string.IsNullOrWhiteSpace(storage.RootPath))
                 throw new InvalidOperationException("Storage:RootPath es obligatorio para el proveedor local.");
-            services.AddSingleton<IFileStorage, LocalFileStorage>();
+            services.AddScoped<IFileStorage, LocalFileStorage>();
             return;
         }
 
@@ -162,6 +167,6 @@ public static class DependencyInjection
             AWSCredentials credentials = new BasicAWSCredentials(storage.S3.AccessKey, storage.S3.SecretKey);
             return new AmazonS3Client(credentials, config);
         });
-        services.AddSingleton<IFileStorage, S3FileStorage>();
+        services.AddScoped<IFileStorage, S3FileStorage>();
     }
 }

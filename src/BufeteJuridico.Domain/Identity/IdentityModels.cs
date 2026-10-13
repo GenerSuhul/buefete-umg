@@ -20,6 +20,8 @@ public sealed class UserAccount : AuditableEntity
 
     public bool IsDeleted { get; set; }
 
+    public bool IsPlatformAccount { get; set; }
+
     public DateOnly? ParticipationStartDate { get; set; }
 
     public DateOnly? ParticipationEndDate { get; set; }

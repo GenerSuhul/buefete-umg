@@ -23,6 +23,8 @@ public sealed class BufeteDbContext(
 {
     public DbSet<UserAccount> Users => Set<UserAccount>();
 
+    public DbSet<Tenant> Tenants => Set<Tenant>();
+
     public DbSet<Role> Roles => Set<Role>();
 
     public DbSet<Permission> Permissions => Set<Permission>();
@@ -42,6 +44,7 @@ public sealed class BufeteDbContext(
     public DbSet<ScanPage> ScanPages => Set<ScanPage>();
 
     public DbSet<Client> Clients => Set<Client>();
+    public DbSet<ClientRestriction> ClientRestrictions => Set<ClientRestriction>();
 
     public DbSet<IncomeDeclaration> IncomeDeclarations => Set<IncomeDeclaration>();
 
@@ -103,6 +106,25 @@ public sealed class BufeteDbContext(
 
         modelBuilder.HasDefaultSchema("bufete");
         ModelConfiguration.Configure(modelBuilder);
+        modelBuilder.Entity<ClientRestriction>(entity =>
+        {
+            entity.ToTable("client_restrictions", table => table.HasCheckConstraint("CK_client_restrictions_dpi", "\"Dpi\" ~ '^[0-9]{13}$'"));
+            entity.HasIndex(x => x.Dpi).IsUnique();
+            entity.Property(x => x.Dpi).HasMaxLength(13);
+            entity.Property(x => x.Reason).HasMaxLength(2000);
+            entity.Property(x => x.SourceTenantCode).HasMaxLength(40);
+            entity.Property(x => x.IssuedByName).HasMaxLength(160);
+        });
+        modelBuilder.Entity<Tenant>(entity =>
+        {
+            entity.ToTable("tenants");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.Code).IsUnique();
+            entity.Property(item => item.Code).HasMaxLength(40);
+            entity.Property(item => item.Name).HasMaxLength(160);
+            entity.Property(item => item.DatabaseName).HasMaxLength(63);
+            entity.Property(item => item.Status).HasMaxLength(24);
+        });
 
         base.OnModelCreating(modelBuilder);
     }

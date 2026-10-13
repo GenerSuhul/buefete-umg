@@ -51,6 +51,8 @@ describe('controles de formulario', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Seleccionar hora de inicio' }));
     const dialog = screen.getByRole('dialog', { name: 'Seleccionar Hora de inicio' });
+    fireEvent.scroll(dialog.querySelector('.time-picker-options') ?? dialog);
+    expect(screen.getByRole('dialog', { name: 'Seleccionar Hora de inicio' })).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '08' }));
     fireEvent.click(within(dialog).getByRole('button', { name: '30' }));
 
@@ -68,9 +70,16 @@ describe('controles de formulario', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /01 ago 2026.*15 ago 2026/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Período de práctica' }));
     const dialog = screen.getByRole('dialog', { name: 'Seleccionar Período de práctica' });
     expect(dialog.querySelectorAll('.rdp-month')).toHaveLength(1);
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Elegir el año' }));
+    const year = within(screen.getByRole('listbox')).getByRole('option', { name: /^2027$/ });
+    fireEvent.scroll(year.parentElement!);
+    expect(screen.getByRole('dialog', { name: 'Seleccionar Período de práctica' })).toBeInTheDocument();
+    fireEvent.click(year);
+    expect(within(dialog).getByRole('combobox', { name: 'Elegir el año' })).toHaveTextContent('2027');
+    expect(dialog).toHaveTextContent('01 ago 2026');
   });
 
   it('mantiene el calendario alineado verticalmente y no invade la columna contigua', () => {

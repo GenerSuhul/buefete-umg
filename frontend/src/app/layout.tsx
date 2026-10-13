@@ -13,6 +13,7 @@ import '../styles/operations.css';
 import '../styles/admin.css';
 import '../styles/login.css';
 import '../styles/account.css';
+import '../styles/admin-center.css';
 export const metadata: Metadata = {
   title: "Bufete Popular UMG · Petén",
   description: "Gestión interna del Bufete Popular UMG, sede Petén.",

@@ -1,6 +1,7 @@
 using BufeteJuridico.Application.Authorization;
 using BufeteJuridico.Application.Common;
 using BufeteJuridico.Application.Documents;
+using BufeteJuridico.Application.Clients;
 using BufeteJuridico.Domain.Cases;
 using BufeteJuridico.Domain.Documents;
 using BufeteJuridico.Infrastructure.Persistence;
@@ -13,7 +14,8 @@ internal sealed class DocumentService(
     BufeteDbContext dbContext,
     IFileStorage fileStorage,
     IOptions<StorageOptions> storageOptions,
-    ICurrentUser currentUser)
+    ICurrentUser currentUser,
+    IClientRestrictionService restrictions)
     : IDocumentService
 {
     public async Task<DocumentDto> StoreAsync(StoreDocumentRequest request, CancellationToken cancellationToken)
@@ -248,6 +250,13 @@ internal sealed class DocumentService(
     }
 
     private async Task EnsureContextAccessCoreAsync(
+        DocumentContextType contextType, Guid contextId, bool write, CancellationToken cancellationToken)
+    {
+        await EnsureContextAuthorizationAsync(contextType, contextId, write, cancellationToken);
+        if (write) await restrictions.EnsureDocumentAllowedAsync(contextType, contextId, cancellationToken);
+    }
+
+    private async Task EnsureContextAuthorizationAsync(
         DocumentContextType contextType,
         Guid contextId,
         bool write,

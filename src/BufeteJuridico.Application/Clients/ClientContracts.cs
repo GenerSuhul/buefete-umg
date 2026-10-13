@@ -117,7 +117,8 @@ public sealed record ClientCaseDto(
 public sealed record ClientProfileDto(
     ClientDto Client,
     IReadOnlyList<IncomeDeclarationDto> IncomeDeclarations,
-    IReadOnlyList<ClientCaseDto> Cases);
+    IReadOnlyList<ClientCaseDto> Cases,
+    ClientRestrictionStatus? Restriction = null);
 
 public sealed record SetClientAttentionRequest(bool IsActive, Guid ConcurrencyToken);
 

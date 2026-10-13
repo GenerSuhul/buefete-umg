@@ -13,6 +13,7 @@ export function LoginPage() {
   const [email, setEmail] = useState(dataSource.mode === 'mock' ? 'admin.bufete@umg.edu.gt' : '');
   const [password, setPassword] = useState(dataSource.mode === 'mock' ? 'demo-local' : '');
   const [showPassword, setShowPassword] = useState(false);
+  const [tenantCode, setTenantCode] = useState('peten');
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const shellRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -30,9 +31,9 @@ export function LoginPage() {
     event.preventDefault();
     setStatus('loading');
     try {
-      await login(email, password);
+      await login(email, password, tenantCode);
       setStatus('success');
-      notify.success({ title: 'Acceso concedido', message: demoEnabled?'Bienvenido al Bufete Popular UMG.':'Bienvenido al Bufete Popular UMG, sede Petén.', duration: 3500 });
+      notify.success({ title: 'Acceso concedido', message: 'Bienvenido al Bufete Popular UMG.', duration: 3500 });
       const button = formRef.current?.querySelector<HTMLElement>('.button');
       const animations = [shellRef.current ? motion.loginExit(shellRef.current).finished : Promise.resolve(), button ? motion.successPulse(button).finished : Promise.resolve()];
       await Promise.all(animations);
@@ -72,6 +73,7 @@ export function LoginPage() {
           </header>
           {demoEnabled && <p className="login-demo-note"><strong>Entorno de demostración</strong><br/>Use únicamente datos ficticios. La información de esta demo está separada del sistema de producción.</p>}
           <div className="login-fields">
+            {!demoEnabled && <Field label="Código de sede"><input value={tenantCode} onChange={(event) => setTenantCode(event.target.value)} autoComplete="organization" required maxLength={40} placeholder="peten" /></Field>}
             <Field label="Correo electrónico">
               <span className="input-with-icon"><UserRound size={18} /><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" autoFocus /></span>
             </Field>

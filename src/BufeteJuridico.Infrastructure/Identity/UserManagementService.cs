@@ -4,6 +4,7 @@ using BufeteJuridico.Application.Identity;
 using BufeteJuridico.Domain.Documents;
 using BufeteJuridico.Domain.Identity;
 using BufeteJuridico.Infrastructure.Persistence;
+using BufeteJuridico.Infrastructure.Tenancy;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,7 +15,9 @@ internal sealed class UserManagementService(
     IPasswordHasher<UserAccount> passwordHasher,
     IFileStorage fileStorage,
     ICurrentUser currentUser,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    TenantContext tenantContext,
+    TenantRegistry tenantRegistry)
     : IUserManagementService
 {
     public async Task<PagedResult<UserSummaryDto>> GetUsersAsync(
@@ -26,7 +29,7 @@ internal sealed class UserManagementService(
         CancellationToken cancellationToken)
     {
         (page, pageSize) = ValidatePage(page, pageSize);
-        var query = dbContext.Users.AsNoTracking().Include(item => item.Roles).ThenInclude(item => item.Role).AsQueryable();
+        var query = dbContext.Users.AsNoTracking().Include(item => item.Roles).ThenInclude(item => item.Role).Where(item => !item.IsPlatformAccount);
 
         query = lifecycle switch
         {
@@ -72,6 +75,7 @@ internal sealed class UserManagementService(
     {
         ValidateUserRequest(request.Username, request.Email, request.FullName, request.ParticipationStartDate, request.ParticipationEndDate);
         ValidatePassword(request.Password);
+        await tenantRegistry.RejectReservedIdentityAsync(request.Username, request.Email, null, cancellationToken);
 
         var normalizedUsername = TextNormalization.Normalize(request.Username);
         var normalizedEmail = TextNormalization.Normalize(request.Email);
@@ -136,6 +140,8 @@ internal sealed class UserManagementService(
         if (request.IsActive != user.IsActive)
             throw new ValidationException("Use la acción de acceso para habilitar o suspender esta cuenta.");
 
+        await tenantRegistry.RejectReservedIdentityAsync(user.Username, request.Email, user.Id, cancellationToken);
+
         var normalizedEmail = TextNormalization.Normalize(request.Email);
         if (await dbContext.Users.AnyAsync(item => item.Id != id && item.NormalizedEmail == normalizedEmail, cancellationToken))
         {
@@ -174,7 +180,7 @@ internal sealed class UserManagementService(
             throw new ConflictException("No puede dar de baja su propia cuenta durante la sesión activa.");
         }
 
-        var user = await dbContext.Users.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
+        var user = await dbContext.Users.SingleOrDefaultAsync(item => item.Id == id && !item.IsPlatformAccount, cancellationToken)
             ?? throw new NotFoundException("No se encontró el usuario.");
         if (user.IsDeleted) throw new ConflictException("La cuenta ya está en eliminados.");
         await EnsureAnotherActiveAdministratorAsync(user, cancellationToken);
@@ -203,7 +209,7 @@ internal sealed class UserManagementService(
             await dbContext.UserRoles.AnyAsync(role => role.UserId == user.Id && role.Role.NormalizedName == "ADMINISTRADOR", cancellationToken);
         if (!isAdministrator) return;
         var anotherExists = await dbContext.Users.AnyAsync(item =>
-            item.Id != user.Id && item.IsActive && !item.IsDeleted &&
+            item.Id != user.Id && item.IsActive && !item.IsDeleted && !item.IsPlatformAccount &&
             item.Roles.Any(role => role.Role.NormalizedName == "ADMINISTRADOR"), cancellationToken);
         if (!anotherExists) throw new ConflictException("Debe permanecer al menos un administrador activo.");
     }
@@ -280,7 +286,7 @@ internal sealed class UserManagementService(
         if (request.ValidFromUtc is not null && request.ValidUntilUtc is not null && request.ValidUntilUtc <= request.ValidFromUtc)
             throw new ValidationException("La vigencia final del rol debe ser posterior a la inicial.");
         var user = await dbContext.Users.Include(item => item.Roles)
-            .SingleOrDefaultAsync(item => item.Id == userId && !item.IsDeleted, cancellationToken)
+            .SingleOrDefaultAsync(item => item.Id == userId && !item.IsDeleted && !item.IsPlatformAccount, cancellationToken)
             ?? throw new NotFoundException("No se encontró el usuario activo.");
         var role = await dbContext.Roles.SingleOrDefaultAsync(item => item.Id == request.RoleId && item.IsActive, cancellationToken)
             ?? throw new NotFoundException("No se encontró el rol activo.");
@@ -310,7 +316,7 @@ internal sealed class UserManagementService(
     public async Task RemoveRoleAsync(Guid userId, Guid roleId, CancellationToken cancellationToken)
     {
         var user = await dbContext.Users.Include(item => item.Roles).ThenInclude(item => item.Role)
-            .SingleOrDefaultAsync(item => item.Id == userId, cancellationToken)
+            .SingleOrDefaultAsync(item => item.Id == userId && !item.IsPlatformAccount, cancellationToken)
             ?? throw new NotFoundException("No se encontró el usuario.");
         var assignment = user.Roles.SingleOrDefault(item => item.RoleId == roleId)
             ?? throw new NotFoundException("El usuario no tiene el rol indicado.");
@@ -332,6 +338,8 @@ internal sealed class UserManagementService(
         ValidatePassword(request.NewPassword);
         var user = await dbContext.Users.SingleOrDefaultAsync(item => item.Id == userId && !item.IsDeleted, cancellationToken)
             ?? throw new NotFoundException("No se encontró el usuario.");
+        if (user.IsPlatformAccount && tenantContext.Code != "peten")
+            throw new ConflictException("Cambie a la sede central Petén para modificar la contraseña de plataforma.");
         if (passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.CurrentPassword) == PasswordVerificationResult.Failed)
             throw new AuthenticationException("La contraseña actual es incorrecta.");
         user.PasswordHash = passwordHasher.HashPassword(user, request.NewPassword);
@@ -346,8 +354,11 @@ internal sealed class UserManagementService(
         ValidateUserRequest("existing", request.Email, request.FullName, null, null);
         var user = await LoadUserAsync(userId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el usuario.");
+        if (user.IsPlatformAccount && tenantContext.Code != "peten")
+            throw new ConflictException("Cambie a la sede central Petén para modificar el perfil de plataforma.");
         if (user.IsDeleted) throw new ConflictException("Restaure la cuenta antes de modificar su perfil.");
         var normalizedEmail = TextNormalization.Normalize(request.Email);
+        await tenantRegistry.RejectReservedIdentityAsync(user.Username, request.Email, user.Id, cancellationToken);
         if (await dbContext.Users.AnyAsync(item => item.Id != userId && item.NormalizedEmail == normalizedEmail, cancellationToken))
             throw new ConflictException("El correo ya está registrado.");
 
@@ -370,7 +381,7 @@ internal sealed class UserManagementService(
     public async Task ResetPasswordAsync(Guid userId, ResetPasswordRequest request, CancellationToken cancellationToken)
     {
         ValidatePassword(request.NewPassword);
-        var user = await dbContext.Users.SingleOrDefaultAsync(item => item.Id == userId && !item.IsDeleted, cancellationToken)
+        var user = await dbContext.Users.SingleOrDefaultAsync(item => item.Id == userId && !item.IsDeleted && !item.IsPlatformAccount, cancellationToken)
             ?? throw new NotFoundException("No se encontró el usuario.");
         user.PasswordHash = passwordHasher.HashPassword(user, request.NewPassword);
         user.SecurityStamp = Guid.NewGuid();
@@ -474,7 +485,7 @@ internal sealed class UserManagementService(
         }
 
         var affectedUsers = await dbContext.Users
-            .Where(item => item.Roles.Any(assignment => assignment.RoleId == id))
+            .Where(item => !item.IsPlatformAccount && item.Roles.Any(assignment => assignment.RoleId == id))
             .ToListAsync(cancellationToken);
         foreach (var user in affectedUsers) user.SecurityStamp = Guid.NewGuid();
         await RevokeActiveTokensAsync(affectedUsers.Select(item => item.Id).ToArray(), cancellationToken);
@@ -487,7 +498,7 @@ internal sealed class UserManagementService(
         await dbContext.Users
             .Include(item => item.Roles)
                 .ThenInclude(item => item.Role)
-            .SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+            .SingleOrDefaultAsync(item => item.Id == id && (!item.IsPlatformAccount || item.Id == currentUser.UserId), cancellationToken);
 
     private async Task<List<Role>> GetValidRolesAsync(IReadOnlyList<Guid> roleIds, CancellationToken cancellationToken)
     {

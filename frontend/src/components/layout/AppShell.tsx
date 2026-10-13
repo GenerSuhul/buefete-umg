@@ -22,6 +22,21 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Home20Regular } from "@fluentui/react-icons/svg/home";
+import { Building20Regular } from "@fluentui/react-icons/svg/building";
+import { People20Regular } from "@fluentui/react-icons/svg/people";
+import { Folder20Regular } from "@fluentui/react-icons/svg/folder";
+import { Book20Regular } from "@fluentui/react-icons/svg/book";
+import { DocumentTable20Regular } from "@fluentui/react-icons/svg/document-table";
+import { DocumentCopy20Regular } from "@fluentui/react-icons/svg/document-copy";
+import { TaskListSquareLtr20Regular } from "@fluentui/react-icons/svg/task-list-square-ltr";
+import { Pulse20Regular } from "@fluentui/react-icons/svg/pulse";
+import { Settings20Regular } from "@fluentui/react-icons/svg/settings";
+import { PersonAccounts20Regular } from "@fluentui/react-icons/svg/person-accounts";
+import { Shield20Regular } from "@fluentui/react-icons/svg/shield";
+import { Delete20Regular } from "@fluentui/react-icons/svg/delete";
+import { PanelLeftContract20Regular } from "@fluentui/react-icons/svg/panel-left-contract";
+import { PanelLeftExpand20Regular } from "@fluentui/react-icons/svg/panel-left-expand";
 import { NavLink, useLocation, useNavigate } from "../../routing/navigation";
 import { useAuth } from "../../context/AuthContext";
 import { dataSource } from "../../data/dataSource";
@@ -51,6 +66,20 @@ interface NavigationGroup {
   label: string;
   icon: LucideIcon;
   items: NavigationItem[];
+}
+
+const fluentNavigationIcons = new Map([
+  [LayoutDashboard, Home20Regular], [ShieldCheck, Shield20Regular],
+  [FolderKanban, Folder20Regular], [UsersRound, People20Regular],
+  [FileStack, DocumentCopy20Regular], [BookOpenCheck, Book20Regular],
+  [Activity, Pulse20Regular], [ClipboardList, TaskListSquareLtr20Regular],
+  [FileClock, DocumentTable20Regular], [Settings2, Settings20Regular],
+  [UserRoundCog, PersonAccounts20Regular], [Trash2, Delete20Regular],
+]);
+
+function NavigationIcon({ icon: Icon, fluent, size = 20 }: { icon: LucideIcon; fluent: boolean; size?: number }) {
+  const FluentIcon = fluent ? fluentNavigationIcons.get(Icon) : undefined;
+  return FluentIcon ? <FluentIcon aria-hidden="true" width={20} height={20} /> : <Icon size={size} aria-hidden="true" />;
 }
 
 const navigationGroups: NavigationGroup[] = [
@@ -167,10 +196,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [openGroups, setOpenGroups] = useState(
     () => new Set(navigationGroups.map((group) => group.id)),
   );
   const { user, logout } = useAuth();
+  const isAdminCenter = !demoEnabled && Boolean(user?.isPlatformAdmin);
   const location = useLocation();
   const breadcrumb = getBreadcrumb(location.pathname);
   const hasAnyPermission = (permissions: string[]) =>
@@ -266,7 +297,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     });
 
   return (
-    <div className="app-viewport">
+    <div className={`app-viewport${isAdminCenter ? " admin-center" : ""}${isAdminCenter && sidebarCollapsed ? " admin-center--collapsed" : ""}`}>
       <div className="app-shell">
         <aside
           className={`app-sidebar ${mobileOpen ? "app-sidebar--open" : ""}`}
@@ -276,8 +307,15 @@ export function AppShell({ children }: { children: ReactNode }) {
             <img src="/umg.png" alt="Universidad Mariano Gálvez" />
             <span>
               <strong>Bufete Popular UMG</strong>
-              <small>{demoEnabled?workspaceName:'Sede Petén'}</small>
+              <small>{demoEnabled ? workspaceName : /^sede\b/i.test(user?.tenantName ?? '') ? user?.tenantName : `Sede ${user?.tenantName ?? 'Petén'}`}</small>
             </span>
+            {isAdminCenter && <IconButton
+              label={sidebarCollapsed ? "Expandir navegación" : "Contraer navegación"}
+              className="sidebar-collapse"
+              aria-expanded={!sidebarCollapsed}
+              aria-controls="workspace-navigation"
+              onClick={() => setSidebarCollapsed(current => !current)}
+            >{sidebarCollapsed ? <PanelLeftExpand20Regular aria-hidden="true" /> : <PanelLeftContract20Regular aria-hidden="true" />}</IconButton>}
             <IconButton
               label="Cerrar navegación"
               className="sidebar-close"
@@ -286,17 +324,21 @@ export function AppShell({ children }: { children: ReactNode }) {
               <X size={20} />
             </IconButton>
           </div>
-          <nav className="sidebar-nav">
+          <nav className="sidebar-nav" id="workspace-navigation">
             <span className="sidebar-nav__eyebrow">ESPACIO DE TRABAJO</span>
+            {!demoEnabled && user?.roles.includes('Administrador') && <NavLink to="/vetos" title="Vetos de atención" aria-label="Vetos de atención" className={({ isActive }) => `sidebar-home ${isActive ? 'active' : ''}`}><span><ShieldCheck size={20} /></span><span><strong>Vetos de atención</strong><small>Control global por DPI</small></span></NavLink>}
+            {isAdminCenter && <NavLink to="/sedes" title="Administración de sedes" aria-label="Administración de sedes" className={({ isActive }) => `sidebar-home ${isActive ? "active" : ""}`}><span><Building20Regular aria-hidden="true" /></span><span><strong>Administración de sedes</strong><small>Superusuario</small></span></NavLink>}
             <NavLink
               to={isStudent ? "/expedientes" : "/"}
               end
+              title={isStudent ? "Mis casos" : "Resumen operativo"}
+              aria-label={isStudent ? "Mis casos" : "Resumen operativo"}
               className={({ isActive }) =>
                 `sidebar-home ${isActive ? "active" : ""}`
               }
             >
               <span>
-                <LayoutDashboard size={19} />
+                <NavigationIcon icon={LayoutDashboard} fluent={isAdminCenter} size={19} />
               </span>
               <span>
                 <strong>{isStudent ? "Mis casos" : "Resumen operativo"}</strong>
@@ -328,7 +370,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     aria-controls={`nav-group-${group.id}`}
                   >
                     <span>
-                      <GroupIcon size={18} />
+                      <NavigationIcon icon={GroupIcon} fluent={isAdminCenter} size={18} />
                     </span>
                     <strong>{group.label}</strong>
                     <ChevronDown
@@ -341,7 +383,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     id={`nav-group-${group.id}`}
                   >
                     {group.items.map((item) => (
-                      <SidebarLink key={item.to} item={item} />
+                      <SidebarLink key={item.to} item={item} fluent={isAdminCenter} />
                     ))}
                   </div>
                 </div>
@@ -370,7 +412,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               />
               <span>
                 <strong>{user?.fullName}</strong>
-                <small>{user?.roles.map(translate).join(", ")}</small>
+                <small>{user?.isPlatformAdmin ? "Superusuario" : user?.roles.map(translate).join(", ")}</small>
               </span>
               <IconButton label="Cerrar sesión" onClick={() => void logout()}>
                 <LogOut size={17} />
@@ -432,7 +474,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span className="profile-trigger__copy">
                 <strong>{user?.fullName ?? user?.username}</strong>
                 <small>
-                  {user?.roles[0] ? translate(user.roles[0]) : "Sin rol"}
+                  {user?.isPlatformAdmin ? "Superusuario" : user?.roles[0] ? translate(user.roles[0]) : "Sin rol"}
                 </small>
               </span>
               <ChevronDown size={15} />
@@ -488,17 +530,17 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
-function SidebarLink({ item }: { item: NavigationItem }) {
-  const Icon = item.icon;
+function SidebarLink({ item, fluent = false }: { item: NavigationItem; fluent?: boolean }) {
   return (
     <NavLink
       to={item.to}
       end={item.end}
       aria-label={`${item.label}: ${item.description}`}
+      title={item.label}
       className={({ isActive }) => (isActive ? "active" : "")}
     >
       <span className="nav-item__icon">
-        <Icon size={17} />
+        <NavigationIcon icon={item.icon} fluent={fluent} size={17} />
       </span>
       <span>
         <strong>{item.label}</strong>
@@ -533,7 +575,7 @@ function getBreadcrumb(pathname: string) {
   if (pathname === "/personas/alumnos")
     return { section: "Práctica académica", page: "Alumnos" };
   const known: Record<string, { section: string; page: string }> = {
-    "/sedes": { section: "Demo / Organización", page: "Bufetes y sedes" },
+    "/sedes": { section: "Administración de plataforma", page: "Bufetes y sedes" },
     "/documentos": { section: "Gestión jurídica", page: "Archivo digital" },
     "/actividades": { section: "Operación interna", page: "Actividades" },
     "/reportes": { section: "Operación interna", page: "Reportes" },

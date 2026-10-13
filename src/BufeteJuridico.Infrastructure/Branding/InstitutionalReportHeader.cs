@@ -12,9 +12,9 @@ internal static class InstitutionalReportHeader
         return Convert.ToBase64String(buffer.ToArray());
     });
 
-    public static string Html =>
+    public static string Html(string tenantName) =>
         $"<header style=\"display:flex;align-items:center;gap:18px;border-bottom:2px solid #0c365f;padding-bottom:16px;margin-bottom:24px\">" +
         $"<img src=\"data:image/png;base64,{Logo.Value}\" alt=\"Universidad Mariano Gálvez\" width=\"72\" height=\"72\" style=\"object-fit:contain\">" +
         "<div><strong style=\"font-size:20px;color:#0c365f\">Bufete Popular UMG</strong>" +
-        "<div>Universidad Mariano Gálvez de Guatemala</div><div>Sede Petén</div></div></header>";
+        $"<div>Universidad Mariano Gálvez de Guatemala</div><div>Sede {System.Net.WebUtility.HtmlEncode(tenantName)}</div></div></header>";
 }

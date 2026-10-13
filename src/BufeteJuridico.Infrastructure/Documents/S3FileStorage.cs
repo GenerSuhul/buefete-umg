@@ -3,12 +3,14 @@ using Amazon.S3;
 using Amazon.S3.Model;
 using BufeteJuridico.Application.Documents;
 using Microsoft.Extensions.Options;
+using BufeteJuridico.Infrastructure.Tenancy;
 
 namespace BufeteJuridico.Infrastructure.Documents;
 
 internal sealed class S3FileStorage(
     IAmazonS3 client,
-    IOptions<StorageOptions> options)
+    IOptions<StorageOptions> options,
+    TenantContext tenant)
     : IFileStorage
 {
     private readonly S3StorageOptions settings = options.Value.S3;
@@ -21,6 +23,7 @@ internal sealed class S3FileStorage(
     {
         var now = DateTimeOffset.UtcNow;
         var storageKey = string.Join('/',
+            "tenants", tenant.Code,
             now.ToString("yyyy"),
             now.ToString("MM"),
             $"{Guid.NewGuid():N}{NormalizeExtension(extension)}");

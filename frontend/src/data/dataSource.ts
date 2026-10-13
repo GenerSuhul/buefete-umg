@@ -90,7 +90,7 @@ interface UserListOptions extends ListOptions {
 export interface DataSource {
   readonly mode: "mock" | "api";
   getPlatformHealth(): Promise<PlatformHealth>;
-  login(email: string, password: string): Promise<TokenResponse>;
+  login(email: string, password: string, tenantCode?: string): Promise<TokenResponse>;
   logout(): Promise<void>;
   getDashboard(): Promise<DashboardData>;
   listClients(options?: ListOptions): Promise<PagedResult<Client>>;
@@ -1466,6 +1466,7 @@ class ApiClient {
     retried = false,
   ): Promise<T> {
     const headers = new Headers(init.headers);
+    if (!headers.has("X-Sede-Code")) headers.set("X-Sede-Code", this.session?.user.tenantCode ?? "peten");
     if (!(init.body instanceof FormData))
       headers.set("Content-Type", "application/json");
     if (!anonymous && this.session?.accessToken)
@@ -1504,6 +1505,7 @@ class ApiClient {
     retried = false,
   ): Promise<Blob> {
     const headers = new Headers(init.headers);
+    headers.set("X-Sede-Code", this.session?.user.tenantCode ?? "peten");
     if (this.session?.accessToken)
       headers.set("Authorization", `Bearer ${this.session.accessToken}`);
     let response: Response;
@@ -1533,7 +1535,7 @@ class ApiClient {
     if (!current?.refreshToken) return false;
     this.refreshPromise = fetch(`${baseUrl}/auth/refresh`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Sede-Code": current.user.tenantCode ?? "peten" },
       body: JSON.stringify({ refreshToken: current.refreshToken }),
     })
       .then(async (response) => {
@@ -1557,9 +1559,11 @@ class ApiClient {
   }
 }
 
+export const platformApi = new ApiClient();
+
 class ApiDataSource implements DataSource {
   readonly mode = "api" as const;
-  private readonly api = new ApiClient();
+  private readonly api = platformApi;
   private readonly reportCache: WeeklyReport[] = [];
   async getPlatformHealth(): Promise<PlatformHealth> {
     let response: Response;
@@ -1574,10 +1578,10 @@ class ApiDataSource implements DataSource {
     if (!response.ok) throw new Error("Los servicios no están disponibles.");
     return response.json() as Promise<PlatformHealth>;
   }
-  async login(email: string, password: string) {
+  async login(email: string, password: string, tenantCode = "peten") {
     const result = await this.api.request<TokenResponse>(
       "/auth/login",
-      { method: "POST", body: JSON.stringify({ email, password }) },
+      { method: "POST", headers: { "X-Sede-Code": tenantCode.trim().toLowerCase() }, body: JSON.stringify({ email, password }) },
       true,
     );
     this.api.setSession(result);
@@ -2088,23 +2092,23 @@ class ApiDataSource implements DataSource {
     });
   }
   openScanPage(id: string, pageId: string) {
-    return this.api.requestBlob(`/scan-sessions/${id}/screens/${pageId}/content`);
+    return this.api.requestBlob(`/scan-sessions/${id}/pages/${pageId}/content`);
   }
   reorderScanPages(id: string, pageIds: string[]) {
-    return this.api.request<ScanSession>(`/scan-sessions/${id}/screens/order`, {
+    return this.api.request<ScanSession>(`/scan-sessions/${id}/pages/order`, {
       method: "PUT",
       body: JSON.stringify({ pageIds }),
     });
   }
   rotateScanPage(id: string, pageId: string, rotationDegrees: number) {
     return this.api.request<ScanSession>(
-      `/scan-sessions/${id}/screens/${pageId}/rotation`,
+      `/scan-sessions/${id}/pages/${pageId}/rotation`,
       { method: "PUT", body: JSON.stringify({ rotationDegrees }) },
     );
   }
   removeScanPage(id: string, pageId: string) {
     return this.api.request<ScanSession>(
-      `/scan-sessions/${id}/screens/${pageId}`,
+      `/scan-sessions/${id}/pages/${pageId}`,
       { method: "DELETE" },
     );
   }

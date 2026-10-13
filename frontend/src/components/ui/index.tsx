@@ -332,11 +332,12 @@ export function Modal({
     const previous = document.activeElement as HTMLElement | null;
     const oldOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    requestAnimationFrame(() =>
-      modalRef.current
-        ?.querySelector<HTMLElement>("button, input, select, textarea, [href]")
-        ?.focus(),
-    );
+    const focusFrame = requestAnimationFrame(() => {
+      const modal = modalRef.current;
+      // Do not steal focus from someone who has already started using the dialog.
+      if (modal && !modal.contains(document.activeElement))
+        modal.querySelector<HTMLElement>("button, input, select, textarea, [href]")?.focus();
+    });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onCloseRef.current();
       if (event.key !== "Tab" || !modalRef.current) return;
@@ -358,6 +359,7 @@ export function Modal({
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
+      cancelAnimationFrame(focusFrame);
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = oldOverflow;
       previous?.focus();
@@ -981,6 +983,7 @@ export function DateRangePickerField({
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<DateRange | undefined>();
+  const [visibleMonth, setVisibleMonth] = useState(new Date());
   const [position, setPosition] = useState({ top: 0, left: 0, width: 344 });
   const rootRef = useRef<HTMLDivElement>(null);
   const display = startValue && endValue
@@ -991,7 +994,7 @@ export function DateRangePickerField({
     if (!open) return;
     const close = (event: MouseEvent) => {
       const target = event.target as Element;
-      if (!rootRef.current?.contains(target) && !target.closest?.(".date-range-popover")) setOpen(false);
+      if (!rootRef.current?.contains(target) && !target.closest?.(".date-range-popover") && !target.closest?.(".calendar-caption-popover")) setOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
@@ -999,7 +1002,10 @@ export function DateRangePickerField({
 
   useEffect(() => {
     if (!open) return;
-    const closeOnLayoutChange = () => setOpen(false);
+    const closeOnLayoutChange = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest(".date-range-popover, .calendar-caption-popover")) return;
+      setOpen(false);
+    };
     window.addEventListener("resize", closeOnLayoutChange);
     document.addEventListener("scroll", closeOnLayoutChange, true);
     return () => {
@@ -1011,6 +1017,7 @@ export function DateRangePickerField({
   const toggle = () => {
     if (open) return setOpen(false);
     setDraft({ from: parseDateOnly(startValue), to: parseDateOnly(endValue) });
+    setVisibleMonth(parseDateOnly(startValue) ?? new Date());
     const rect = rootRef.current?.getBoundingClientRect();
     if (rect) {
       const width = Math.min(344, window.innerWidth - 24);
@@ -1033,7 +1040,7 @@ export function DateRangePickerField({
   return (
     <div className="field date-range-field" ref={rootRef}>
       <span>{label}{required ? " *" : ""}</span>
-      <button type="button" className="date-range-control" aria-expanded={open} onClick={toggle}>
+      <button type="button" className="date-range-control" aria-label={label} aria-expanded={open} onClick={toggle}>
         <span className={startValue ? "" : "is-placeholder"}>{display}</span>
         <CalendarDays size={18} />
       </button>
@@ -1050,7 +1057,13 @@ export function DateRangePickerField({
             locale={es}
             selected={draft}
             onSelect={setDraft}
-            defaultMonth={draft?.from}
+            month={visibleMonth}
+            onMonthChange={setVisibleMonth}
+            captionLayout="dropdown"
+            components={{ Dropdown: CalendarDropdown }}
+            navLayout="after"
+            startMonth={new Date(1900, 0)}
+            endMonth={new Date(new Date().getFullYear() + 20, 11)}
             numberOfMonths={1}
             showOutsideDays
           />
@@ -1093,7 +1106,10 @@ export function TimePickerField({
 
   useEffect(() => {
     if (!open) return;
-    const closeOnLayoutChange = () => setOpen(false);
+    const closeOnLayoutChange = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest(".time-picker-popover")) return;
+      setOpen(false);
+    };
     window.addEventListener("resize", closeOnLayoutChange);
     document.addEventListener("scroll", closeOnLayoutChange, true);
     return () => {

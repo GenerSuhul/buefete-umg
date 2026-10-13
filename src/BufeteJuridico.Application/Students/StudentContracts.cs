@@ -51,7 +51,21 @@ public sealed record SaveStudentRequest(
     string? HomePhone,
     string Email,
     DateOnly RegistrationDate,
-    Guid? ConcurrencyToken = null);
+    Guid? ConcurrencyToken = null,
+    UpdateStudentPracticeRequest? Practice = null);
+
+public sealed record UpdateStudentPracticeRequest(
+    Guid EnrollmentId,
+    Guid ConcurrencyToken,
+    PracticeModality Modality,
+    string? SiteName,
+    string? SiteAddress,
+    string? Shift,
+    string? PracticeDays,
+    TimeOnly? StartTime,
+    TimeOnly? EndTime,
+    DateOnly? StartDate,
+    DateOnly? EndDate);
 
 public sealed record EnrollmentApplicationDto(
     Guid Id,
@@ -75,7 +89,8 @@ public sealed record EnrollmentApplicationDto(
     DateOnly? ClinicCardIssuedDate,
     DateOnly? ClinicCardExpirationDate,
     DateTimeOffset? ClinicCardDeliveredAtUtc,
-    IReadOnlyList<StudentRequirementDto> Requirements);
+    IReadOnlyList<StudentRequirementDto> Requirements,
+    Guid ConcurrencyToken);
 
 public sealed record StudentRequirementDto(
     Guid Id,

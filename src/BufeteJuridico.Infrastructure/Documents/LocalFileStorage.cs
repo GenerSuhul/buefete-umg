@@ -1,15 +1,18 @@
 using System.Security.Cryptography;
 using BufeteJuridico.Application.Documents;
 using Microsoft.Extensions.Options;
+using BufeteJuridico.Infrastructure.Tenancy;
 
 namespace BufeteJuridico.Infrastructure.Documents;
 
 internal sealed class LocalFileStorage : IFileStorage
 {
     private readonly string rootPath;
+    private readonly TenantContext tenant;
 
-    public LocalFileStorage(IOptions<StorageOptions> options)
+    public LocalFileStorage(IOptions<StorageOptions> options, TenantContext tenant)
     {
+        this.tenant = tenant;
         rootPath = Path.GetFullPath(options.Value.RootPath, Directory.GetCurrentDirectory());
         Directory.CreateDirectory(rootPath);
     }
@@ -21,7 +24,7 @@ internal sealed class LocalFileStorage : IFileStorage
         CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
-        var relativeDirectory = Path.Combine(now.ToString("yyyy"), now.ToString("MM"));
+        var relativeDirectory = Path.Combine("tenants", tenant.Code, now.ToString("yyyy"), now.ToString("MM"));
         var directory = Path.Combine(rootPath, relativeDirectory);
         Directory.CreateDirectory(directory);
 

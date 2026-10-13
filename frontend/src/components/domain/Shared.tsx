@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, Search, SlidersHorizontal } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Button, Field, Select } from '../ui';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { Button } from '../ui';
 
 export type LookupOption = { value: string; label: string };
 
@@ -10,6 +10,11 @@ export function RelationLookup({ label, value, onChange, load, emptyLabel = 'Sel
   const [selected, setSelected] = useState<LookupOption | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [revision, setRevision] = useState(0);
+  const container = useRef<HTMLDivElement>(null);
+  const listId = useId();
   const loadRef = useRef(load);
   useEffect(() => { loadRef.current = load; }, [load]);
 
@@ -22,6 +27,7 @@ export function RelationLookup({ label, value, onChange, load, emptyLabel = 'Sel
         .then((items) => {
           if (!active) return;
           setOptions(items);
+          setActiveIndex(0);
           const current = items.find((item) => item.value === value);
           if (current) setSelected(current);
         })
@@ -29,29 +35,47 @@ export function RelationLookup({ label, value, onChange, load, emptyLabel = 'Sel
         .finally(() => { if (active) setLoading(false); });
     }, 250);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [search, value]);
+  }, [search, value, revision]);
+
+  useEffect(() => {
+    const dismiss = (event: PointerEvent) => { if (!container.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener('pointerdown', dismiss);
+    return () => document.removeEventListener('pointerdown', dismiss);
+  }, []);
 
   const visibleOptions = selected && selected.value === value && !options.some((item) => item.value === value)
     ? [selected, ...options]
     : options;
+  const choose = (item: LookupOption) => { setSelected(item); onChange(item.value); setSearch(''); setOpen(false); };
 
-  return <Field label={`${label}${required ? ' *' : ''}`}>
-    <div className="relation-lookup">
+  return <div className="field"><span>{label}{required ? ' *' : ''}</span>
+    <div className="relation-lookup" ref={container} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false); }}>
       <label className="relation-lookup__search">
         <Search size={16} />
-        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre o referencia…" aria-label={`Buscar ${label.toLowerCase()}`} />
+        <input role="combobox" aria-label={label} aria-expanded={open} aria-controls={listId} aria-autocomplete="list"
+          aria-activedescendant={open && !loading && visibleOptions[activeIndex] ? `${listId}-${activeIndex}` : undefined}
+          value={open ? search : (value && selected?.value === value ? selected.label : search)}
+          onFocus={() => setOpen(true)} onClick={() => setOpen(true)}
+          onChange={(event) => { setSearch(event.target.value); setLoading(true); setOpen(true); if (value) onChange(''); }}
+          placeholder="Buscar por nombre, DPI o referencia…" autoComplete="off"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); }
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault(); setOpen(true);
+              setActiveIndex(i => Math.max(0, Math.min(visibleOptions.length - 1, i + (event.key === 'ArrowDown' ? 1 : -1))));
+            }
+            if (event.key === 'Enter' && open) { event.preventDefault(); if (!loading && visibleOptions[activeIndex]) choose(visibleOptions[activeIndex]); }
+          }} />
       </label>
-      <Select aria-label={label} value={value} onChange={(event) => {
-        const next = event.target.value;
-        setSelected(visibleOptions.find((item) => item.value === next) ?? null);
-        onChange(next);
-      }} disabled={loading && visibleOptions.length === 0}>
-        <option value="">{loading ? 'Cargando…' : emptyLabel}</option>
-        {visibleOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-      </Select>
-      {error ? <small className="field-error" role="alert">{error}</small> : null}
+      {open && <div className="relation-lookup__results">
+        {loading ? <small role="status">Buscando registros…</small> : error ? <div role="alert">{error} <Button type="button" variant="ghost" size="sm" onClick={() => setRevision(r => r + 1)}>Reintentar</Button></div> : null}
+        <div role="listbox" id={listId} aria-label={`Resultados de ${label.toLowerCase()}`}>
+          {!loading && !error && visibleOptions.map((item, index) => <button type="button" role="option" id={`${listId}-${index}`} aria-selected={item.value === value} className={index === activeIndex ? 'active' : ''} key={item.value} onPointerDown={event => event.preventDefault()} onClick={() => choose(item)}>{item.label}</button>)}
+        </div>
+        {!loading && !error && !visibleOptions.length && <small role="status">Sin coincidencias. {emptyLabel}.</small>}
+      </div>}
     </div>
-  </Field>;
+  </div>;
 }
 
 export function FilterBar({ value, onChange, placeholder, children }: { value: string; onChange: (value: string) => void; placeholder: string; children?: ReactNode }) {

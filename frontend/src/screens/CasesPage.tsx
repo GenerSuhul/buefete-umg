@@ -113,7 +113,7 @@ export function CasesPage() {
   }, []);
   const loadClients = useCallback(async (term: string) => {
     const result = await dataSource.listClients({ search: term, pageSize: 20 });
-    return result.items.map((client) => ({ value: client.id, label: `${client.fullName} · ${client.receptionNumber}` }));
+    return result.items.map((client) => ({ value: client.id, label: `${client.fullName} · DPI ${client.dpi ? formatCui(client.dpi) : 'pendiente'} · ${client.receptionNumber}` }));
   }, []);
   const selectedClient = useAsyncData(
     async () => (form.clientId ? dataSource.getClient(form.clientId) : null),
@@ -157,6 +157,10 @@ export function CasesPage() {
     setNewOpen(true);
   };
   const validateStep = (target = step) => {
+    if (selectedClient.loading && form.clientId) return 'Verificando la ficha del usuario…';
+    if (selectedClient.error) return 'No se pudo verificar la ficha. Seleccione nuevamente el usuario.';
+    if (selectedClient.data?.restriction?.isRestricted) return 'Atención bloqueada: este DPI tiene un veto global permanente en todas las sedes.';
+    if (selectedClient.data && (!selectedClient.data.client.dpi || selectedClient.data.restriction?.hasValidIdentity === false)) return 'Corrija el DPI en la ficha del usuario antes de abrir un expediente.';
     if (target === 0 && (!form.clientId || !form.processTypeId))
       return "Seleccione un usuario y un tipo de proceso.";
     if (
@@ -212,7 +216,7 @@ export function CasesPage() {
       });
       setNewOpen(false);
       await reload();
-      navigate(`/expedientes/${detail.summary.id}`);
+      navigate(`/expedientes/${detail.summary.id}${assigningStudent ? `?assignStudentId=${encodeURIComponent(requestedStudentId)}` : ''}`);
     } catch (caught) {
       setFormError(
         caught instanceof Error
@@ -248,12 +252,12 @@ export function CasesPage() {
         </Button>
       )}
       {step < steps.length - 1 ? (
-        <Button disabled={busy} onClick={next}>
-          Continuar
+        <Button disabled={busy || Boolean(form.clientId && selectedClient.loading)} onClick={next}>
+          {form.clientId && selectedClient.loading ? 'Verificando usuario…' : 'Continuar'}
           <ArrowRight size={16} />
         </Button>
       ) : (
-        <Button disabled={busy} onClick={create}>
+        <Button disabled={busy || Boolean(form.clientId && selectedClient.loading)} onClick={create}>
           {busy ? "Creando expediente…" : "Abrir expediente"}
         </Button>
       )}
@@ -420,7 +424,7 @@ export function CasesPage() {
                 value={
                   selectedClient.data?.client.fullName ?? "Cargando usuario…"
                 }
-                hint={selectedClient.data?.client.receptionNumber}
+                hint={`DPI ${selectedClient.data?.client.dpi ?? 'pendiente'} · ${selectedClient.data?.client.receptionNumber ?? ''}`}
               />
             ) : (
               <RelationLookup label="Usuario" required value={form.clientId} onChange={(value) => update("clientId", value)} load={loadClients} emptyLabel="Seleccione un usuario" />
@@ -439,6 +443,7 @@ export function CasesPage() {
                 ))}
               </Select>
             </Field>
+            {!lockedClient && <div className="wizard-inline-note"><span>¿Es una persona nueva? <Link to="/personas/clientes">Registre primero al usuario</Link>. Desde su ficha podrá abrir el proceso sin volver a buscarlo.</span></div>}
             <ReadOnlyValue
               label="Estado inicial"
               value="Recolección documental"
@@ -458,8 +463,8 @@ export function CasesPage() {
         )}
         {step === 1 && (
           <WizardStep
-            title="Checklist documental antes de abrir"
-            description="Revise los documentos, datos y condiciones específicas del proceso seleccionado."
+            title="Documentos y datos que necesitará"
+            description="Revise el checklist del proceso. Al abrir el expediente podrá adjuntar o escanear cada documento, revisar los requisitos y asignar un alumno habilitado. Los documentos pendientes no se marcan como recibidos."
           >
             <div className="requirement-preview field--wide">
               {selectedProcess?.requirements.length ? (

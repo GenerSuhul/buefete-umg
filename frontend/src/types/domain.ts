@@ -1,4 +1,6 @@
 export type Id = string;
+export interface ClientRestrictionStatus { isRestricted: boolean; reference: string | null; hasValidIdentity?: boolean }
+export interface ClientRestriction { id: string; dpi: string; reason: string; sourceTenantCode: string; issuedByName: string; createdAtUtc: string }
 
 export interface PagedResult<T> {
   items: T[];
@@ -16,6 +18,9 @@ export interface AuthenticatedUser {
   photoDocumentId: Id | null;
   roles: string[];
   permissions: string[];
+  tenantCode?: string;
+  tenantName?: string;
+  isPlatformAdmin?: boolean;
 }
 
 export interface TokenResponse {
@@ -157,6 +162,7 @@ export interface CourtNotification {
 }
 
 export interface CaseDetail {
+  restriction?: ClientRestrictionStatus | null;
   summary: CaseSummary;
   requirements: CaseRequirement[];
   counterparties: Counterparty[];
@@ -224,6 +230,7 @@ export interface IncomeDeclaration {
 }
 
 export interface ClientProfile {
+  restriction?: ClientRestrictionStatus | null;
   client: Client;
   incomeDeclarations: IncomeDeclaration[];
   cases: Array<Pick<CaseSummary, 'id' | 'caseNumber' | 'status' | 'stage'> & {
@@ -293,6 +300,7 @@ export interface StudentRequirement {
 
 export interface Enrollment {
   id: Id;
+  concurrencyToken?: Id;
   studentId: Id;
   modality: 'CivilFamilyCases' | 'ExternalInternship' | 'AdHonoremSecretariat';
   status: EnrollmentStatus;

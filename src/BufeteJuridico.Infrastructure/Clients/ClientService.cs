@@ -8,10 +8,11 @@ using BufeteJuridico.Domain.Documents;
 using BufeteJuridico.Infrastructure.Branding;
 using BufeteJuridico.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using BufeteJuridico.Infrastructure.Tenancy;
 
 namespace BufeteJuridico.Infrastructure.Clients;
 
-internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService documentService, TimeProvider timeProvider) : IClientService
+internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService documentService, TimeProvider timeProvider, TenantContext tenantContext, IClientRestrictionService restrictions) : IClientService
 {
     public async Task<PagedResult<ClientDto>> GetClientsAsync(
         string? search,
@@ -27,9 +28,10 @@ internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService 
         if (!string.IsNullOrWhiteSpace(search))
         {
             var normalized = TextNormalization.Normalize(search);
+            var identitySearch = ContactNormalization.Digits(search);
             query = query.Where(item =>
                 item.NormalizedFullName.Contains(normalized) ||
-                (item.Dpi != null && item.Dpi.Contains(search.Trim())) ||
+                (identitySearch.Length > 0 && item.Dpi != null && item.Dpi.Replace(" ", "").Replace("-", "").Contains(identitySearch)) ||
                 item.ReceptionNumber.Contains(search.Trim()));
         }
 
@@ -52,6 +54,7 @@ internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService 
         if (client.ConcurrencyToken != request.ConcurrencyToken)
             throw new DbUpdateConcurrencyException("La ficha fue modificada por otra persona.");
         dbContext.Entry(client).Property(item => item.ConcurrencyToken).OriginalValue = request.ConcurrencyToken;
+        if (request.IsActive) await restrictions.EnsureAllowedAsync(client.Dpi, cancellationToken);
         client.IsActive = request.IsActive;
         await dbContext.SaveChangesAsync(cancellationToken);
         return Map(client);
@@ -93,12 +96,13 @@ internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService 
                     item.Stage,
                     lastStep?.Title,
                     lastStep?.OccurredAtUtc);
-            }).ToList());
+            }).ToList(), await restrictions.GetStatusAsync(client.Dpi, cancellationToken));
     }
 
     public async Task<ClientDto> CreateClientAsync(SaveClientRequest request, CancellationToken cancellationToken)
     {
         Validate(request);
+        await restrictions.EnsureAllowedAsync(request.Dpi, cancellationToken);
         await EnsureDpiAvailableAsync(request.Dpi, null, cancellationToken);
 
         var client = new Client
@@ -124,8 +128,16 @@ internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService 
             throw new ValidationException("La versión del cliente es obligatoria para guardar cambios.");
         dbContext.Entry(client).Property(item => item.ConcurrencyToken).OriginalValue = concurrencyToken;
 
+        // Lock both identities in stable order: changing the DPI must not bypass an existing veto.
+        var priorDigits = ContactNormalization.Digits(client.Dpi);
+        var priorIdentity = priorDigits.Length == 13 && priorDigits.All(c => c is >= '0' and <= '9') ? priorDigits : null;
+        foreach (var dpi in new[] { priorIdentity, request.Dpi }.Where(value => !string.IsNullOrWhiteSpace(value))
+                     .Distinct().OrderBy(value => ContactNormalization.Digits(value), StringComparer.Ordinal))
+            await restrictions.EnsureAllowedAsync(dpi, cancellationToken);
         await EnsureDpiAvailableAsync(request.Dpi, id, cancellationToken);
-        if (request.SignatureDocumentId is Guid signatureDocumentId)
+        // Preserve the already-associated signature when correcting a legacy identity.
+        // New associations still pass document authorization and the global attention guard.
+        if (request.SignatureDocumentId is Guid signatureDocumentId && request.SignatureDocumentId != client.SignatureDocumentId)
             await documentService.EnsureDocumentMatchesContextAsync(signatureDocumentId, DocumentContextType.Client, id, cancellationToken);
         Apply(client, request);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -154,6 +166,12 @@ internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService 
             throw new NotFoundException("No se encontró el cliente.");
         }
 
+        var ownerDpi = await dbContext.Clients.Where(item => item.Id == clientId).Select(item => item.Dpi).SingleAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(ownerDpi) && !string.IsNullOrWhiteSpace(request.Dpi) &&
+            ContactNormalization.Digits(ownerDpi) != ContactNormalization.Digits(request.Dpi))
+            throw new ValidationException("El DPI de la declaración debe coincidir con el DPI de la ficha del usuario.");
+        await restrictions.EnsureAllowedAsync(ownerDpi, cancellationToken);
+        await restrictions.EnsureAllowedAsync(request.Dpi, cancellationToken, required: false);
         if (request.SignedDocumentId is Guid signedDocumentId)
             await documentService.EnsureDocumentMatchesContextAsync(signedDocumentId, DocumentContextType.Client, clientId, cancellationToken);
 
@@ -215,7 +233,7 @@ internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService 
             .Append("<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\">")
             .Append("<title>Declaración jurada de ingresos</title>")
             .Append("<style>body{font-family:Arial,sans-serif;max-width:800px;margin:40px auto;line-height:1.6}h1{text-align:center;font-size:20px}.signature{margin-top:80px;border-top:1px solid #000;text-align:center}</style>")
-            .Append("</head><body>").Append(InstitutionalReportHeader.Html)
+            .Append("</head><body>").Append(InstitutionalReportHeader.Html(tenantContext.Name))
             .Append("<h1>DECLARACIÓN JURADA DE INGRESOS</h1>")
             .Append("<p>Yo, <strong>").Append(Encode(declaration.FullName)).Append("</strong>, de ")
             .Append(Encode(declaration.DeclaredAge)).Append(" años, estado civil ")

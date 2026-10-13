@@ -9,6 +9,7 @@ using BufeteJuridico.Domain.Documents;
 using BufeteJuridico.Domain.Students;
 using BufeteJuridico.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using BufeteJuridico.Infrastructure.Tenancy;
 
 namespace BufeteJuridico.Infrastructure.Students;
 
@@ -17,7 +18,8 @@ internal sealed class StudentService(
     IUserManagementService userManagementService,
     IDocumentService documentService,
     ICurrentUser currentUser,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    TenantContext tenantContext)
     : IStudentService
 {
     public async Task<PagedResult<StudentDto>> GetStudentsAsync(
@@ -231,7 +233,31 @@ internal sealed class StudentService(
             ?? throw new NotFoundException("No se encontró el alumno.");
         if (request.ConcurrencyToken is not Guid concurrencyToken || concurrencyToken == Guid.Empty)
             throw new ValidationException("La versión del alumno es obligatoria para guardar cambios.");
+        if (student.ConcurrencyToken != concurrencyToken)
+            throw new ConflictException("El alumno cambió. Actualice la pantalla antes de guardar.");
         dbContext.Entry(student).Property(item => item.ConcurrencyToken).OriginalValue = concurrencyToken;
+
+        if (request.Practice is { } practice)
+        {
+            ValidatePractice(practice.Modality, practice.StartTime, practice.EndTime, practice.StartDate, practice.EndDate);
+            var enrollment = await dbContext.EnrollmentApplications.SingleOrDefaultAsync(
+                item => item.Id == practice.EnrollmentId && item.StudentId == id, cancellationToken)
+                ?? throw new NotFoundException("No se encontró la inscripción del alumno.");
+            if (practice.ConcurrencyToken == Guid.Empty)
+                throw new ValidationException("La versión de la inscripción es obligatoria.");
+            if (enrollment.ConcurrencyToken != practice.ConcurrencyToken)
+                throw new ConflictException("La inscripción cambió. Actualice la pantalla antes de guardar.");
+            dbContext.Entry(enrollment).Property(item => item.ConcurrencyToken).OriginalValue = practice.ConcurrencyToken;
+            enrollment.Modality = practice.Modality;
+            enrollment.SiteName = practice.Modality == PracticeModality.ExternalInternship ? Clean(practice.SiteName) : tenantContext.Name;
+            enrollment.SiteAddress = Clean(practice.SiteAddress);
+            enrollment.Shift = Clean(practice.Shift);
+            enrollment.PracticeDays = Clean(practice.PracticeDays);
+            enrollment.StartTime = practice.StartTime;
+            enrollment.EndTime = practice.EndTime;
+            enrollment.StartDate = practice.StartDate;
+            enrollment.EndDate = practice.EndDate;
+        }
 
         await EnsureUniqueStudentDataAsync(id, request, cancellationToken);
         Apply(student, request);
@@ -280,10 +306,7 @@ internal sealed class StudentService(
         var student = await dbContext.Students.SingleOrDefaultAsync(item => item.Id == studentId && item.IsActive, cancellationToken)
             ?? throw new NotFoundException("No se encontró el alumno.");
 
-        if (request.StartDate is not null && request.EndDate is not null && request.EndDate < request.StartDate)
-        {
-            throw new ValidationException("La fecha final de práctica no puede ser anterior a la inicial.");
-        }
+        ValidatePractice(request.Modality, request.StartTime, request.EndTime, request.StartDate, request.EndDate);
 
         var hasOpenApplication = await dbContext.EnrollmentApplications.AnyAsync(item =>
             item.StudentId == studentId &&
@@ -311,7 +334,7 @@ internal sealed class StudentService(
             Student = student,
             Modality = request.Modality,
             Status = request.InitialStatus,
-            SiteName = Clean(request.SiteName),
+            SiteName = request.Modality == PracticeModality.ExternalInternship ? Clean(request.SiteName) : tenantContext.Name,
             SiteAddress = Clean(request.SiteAddress),
             Shift = Clean(request.Shift),
             PracticeDays = Clean(request.PracticeDays),
@@ -538,6 +561,15 @@ internal sealed class StudentService(
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
+    private static void ValidatePractice(PracticeModality modality, TimeOnly? startTime, TimeOnly? endTime, DateOnly? startDate, DateOnly? endDate)
+    {
+        if (!Enum.IsDefined(modality)) throw new ValidationException("Seleccione una modalidad de práctica válida.");
+        if (startDate is not null && endDate is not null && endDate < startDate)
+            throw new ValidationException("La fecha final de práctica no puede ser anterior a la inicial.");
+        if (startTime is not null && endTime is not null && endTime <= startTime)
+            throw new ValidationException("La hora de finalización debe ser posterior a la hora de inicio.");
+    }
+
     private static int CalculateAge(DateOnly birthDate, DateOnly referenceDate)
     {
         var age = referenceDate.Year - birthDate.Year;
@@ -606,7 +638,8 @@ internal sealed class StudentService(
             .Select(requirement => Map(
                 requirement,
                 requirementMetadata?.GetValueOrDefault(requirement.RequirementDefinitionId)))
-            .ToList());
+            .ToList(),
+        item.ConcurrencyToken);
 
     private static StudentRequirementDto Map(StudentRequirement item, RequirementMetadata? metadata = null) => new(
         item.Id,

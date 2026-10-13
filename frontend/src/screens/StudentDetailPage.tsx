@@ -24,6 +24,9 @@ import {
   Button,
   Card,
   AppDatePicker,
+  DateRangePickerField,
+  TimePickerField,
+  ReadOnlyValue,
   DocumentLink,
   ErrorState,
   Field,
@@ -38,7 +41,7 @@ import { dataSource } from "../data/dataSource";
 import { feedbackHandled } from "../components/ui/feedback/operationFeedback";
 import { useAuth } from "../context/AuthContext";
 import { useAsyncData } from "../hooks/useAsyncData";
-import { useConfirm } from "../components/ui/Feedback";
+import { useConfirm, useNotify } from "../components/ui/Feedback";
 import type { StudentProfile, StudentRequirement } from "../types/domain";
 import { formatDate, statusTone, translate } from "../utils/format";
 import { toLocalDateOnly } from "../utils/date";
@@ -68,6 +71,7 @@ const emptyEdit = {
   homePhone: "",
   email: "",
   registrationDate: "",
+  modality: 'CivilFamilyCases', siteName: '', siteAddress: '', practiceShift: '', practiceDays: '', startTime: '', endTime: '', startDate: '', endDate: '',
 };
 
 const enrollmentStatusLabels: Record<string, string> = {
@@ -94,6 +98,7 @@ const enrollmentTransitions: Record<string, string[]> = {
 
 export function StudentDetailPage() {
   const { user } = useAuth();
+  const notify = useNotify();
   const confirm = useConfirm();
   const canWrite = Boolean(
     user?.permissions.includes("*") ||
@@ -188,6 +193,11 @@ export function StudentDetailPage() {
       homePhone: formatGuatemalaPhone(student.homePhone ?? ""),
       email: student.email,
       registrationDate: student.registrationDate,
+      modality: enrollment?.modality ?? 'CivilFamilyCases',
+      siteName: enrollment?.siteName ?? '', siteAddress: enrollment?.siteAddress ?? '',
+      practiceShift: enrollment?.shift ?? '', practiceDays: enrollment?.practiceDays ?? '',
+      startTime: enrollment?.startTime?.slice(0, 5) ?? '', endTime: enrollment?.endTime?.slice(0, 5) ?? '',
+      startDate: enrollment?.startDate ?? '', endDate: enrollment?.endDate ?? '',
     });
     setStudentPhoto(null);
     setFormError("");
@@ -261,13 +271,21 @@ export function StudentDetailPage() {
         email: editForm.email,
         registrationDate: editForm.registrationDate,
         concurrencyToken: student.concurrencyToken,
+        practice: enrollment ? {
+          enrollmentId: enrollment.id, concurrencyToken: enrollment.concurrencyToken,
+          modality: editForm.modality, siteName: editForm.siteName || null, siteAddress: editForm.siteAddress || null,
+          shift: editForm.practiceShift || null, practiceDays: editForm.practiceDays || null,
+          startTime: editForm.startTime || null, endTime: editForm.endTime || null,
+          startDate: editForm.startDate || null, endDate: editForm.endDate || null,
+        } : null,
       });
       if (studentPhoto) {
         if (!student.userAccountId)
           throw new Error(
             "Primero vincule una cuenta de usuario al alumno para guardar su fotografía.",
           );
-        await dataSource.setUserPhoto(student.userAccountId, studentPhoto);
+        try { await dataSource.setUserPhoto(student.userAccountId, studentPhoto); }
+        catch (reason) { notify.warning({ title: 'Perfil guardado; fotografía pendiente', message: `Los datos se guardaron. Vuelva a adjuntar la fotografía: ${reason instanceof Error ? reason.message : 'revise la conexión'}`, duration: 12000 }); }
       }
       setAction(null);
       await reload();
@@ -941,6 +959,20 @@ export function StudentDetailPage() {
             }
             required
           />
+          {enrollment && <>
+            <div className="form-section-heading field--wide"><strong>Datos de la práctica</strong><span>El estado y la resolución se gestionan en Inscripción; el acceso conserva su período autorizado.</span></div>
+            <ReadOnlyValue label="Sede responsable" value={user?.tenantName ?? 'Sede actual'} />
+            <Field label="Modalidad"><Select value={editForm.modality} onChange={(event) => setEditForm({ ...editForm, modality: event.target.value })}>
+              <option value="CivilFamilyCases">Casos civiles y de familia</option><option value="ExternalInternship">Pasantía externa</option><option value="AdHonoremSecretariat">Secretaría ad honorem</option>
+            </Select></Field>
+            {editForm.modality === 'ExternalInternship' && <Field label="Institución externa de práctica" hint="No cambia la sede responsable."><input value={editForm.siteName} onChange={(event) => setEditForm({ ...editForm, siteName: event.target.value })} /></Field>}
+            <Field label="Dirección del lugar de práctica" wide><textarea value={editForm.siteAddress} onChange={(event) => setEditForm({ ...editForm, siteAddress: event.target.value })} /></Field>
+            <Field label="Jornada de práctica"><Select value={editForm.practiceShift} onChange={(event) => setEditForm({ ...editForm, practiceShift: event.target.value })}><option value="">Sin definir</option><option value="Matutina">Matutina</option><option value="Vespertina">Vespertina</option><option value="Nocturna">Nocturna</option></Select></Field>
+            <Field label="Días de práctica"><input value={editForm.practiceDays} onChange={(event) => setEditForm({ ...editForm, practiceDays: event.target.value })} /></Field>
+            <TimePickerField label="Hora de inicio" value={editForm.startTime} onChange={(startTime) => setEditForm({ ...editForm, startTime })} />
+            <TimePickerField label="Hora de finalización" value={editForm.endTime} onChange={(endTime) => setEditForm({ ...editForm, endTime })} />
+            <DateRangePickerField label="Período de práctica" startValue={editForm.startDate} endValue={editForm.endDate} onChange={(startDate, endDate) => setEditForm({ ...editForm, startDate, endDate })} />
+          </>}
           <div className="form-section-heading field--wide"><strong>Información laboral</strong><span>Datos opcionales del lugar de trabajo.</span></div>
           <Field label="Lugar de trabajo">
             <input

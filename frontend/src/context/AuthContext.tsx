@@ -7,7 +7,7 @@ import type { AuthenticatedUser } from '../types/domain';
 interface AuthContextValue {
   user: AuthenticatedUser | null;
   loading: boolean;
-  login(email: string, password: string): Promise<void>;
+  login(email: string, password: string, tenantCode?: string): Promise<void>;
   logout(options?: { silent?: boolean }): Promise<void>;
   updateProfile(input: { fullName: string; email: string }): Promise<void>;
   updatePhoto(file: File): Promise<void>;
@@ -49,10 +49,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthContextValue>(() => ({
     user,
     loading,
-    async login(email, password) {
+    async login(email, password, tenantCode) {
       setLoading(true);
       try {
-        const response = await dataSource.login(email, password);
+        const response = await dataSource.login(email, password, tenantCode);
         setUser(response.user);
       } finally {
         setLoading(false);

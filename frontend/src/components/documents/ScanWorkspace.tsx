@@ -59,6 +59,8 @@ function PageImage({
 }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
+    // PDF tiles identify pages; only the selected PDF is downloaded and displayed.
+    if (!page.contentType.startsWith("image/")) return;
     let disposed = false;
     let currentUrl: string | null = null;
     dataSource
@@ -134,6 +136,10 @@ export function ScanWorkspace({
   const [selectedContextLabel, setSelectedContextLabel] = useState("");
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [selectedUrl, setSelectedUrl] = useState<string | null>(null);
+  const [pageLoading, setPageLoading] = useState(false);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [pageRetry, setPageRetry] = useState(0);
+  const [showFinalPreview, setShowFinalPreview] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [draggedPageId, setDraggedPageId] = useState<string | null>(null);
   const replacementLabels = useRef(new Map<string, string>());
@@ -201,29 +207,36 @@ export function ScanWorkspace({
   useEffect(() => {
     let disposed = false;
     let url: string | null = null;
+    setSelectedUrl(null);
+    setPageError(null);
+    setPageLoading(false);
     if (!session || !selectedPage) {
-      setSelectedUrl(null);
       return;
     }
+    setPageLoading(true);
     dataSource
       .openScanPage(session.id, selectedPage.id)
-      .then((blob) => {
+      .then(async (blob) => {
+        // The API returns the original import, which may contain several pages.
+        // Display exactly the selected page with its persisted rotation.
+        if (selectedPage.contentType === "application/pdf") {
+          const { scanPagePreview } = await import("../../utils/scanPagePreview");
+          blob = await scanPagePreview(blob, selectedPage.sourcePageNumber ?? 1, selectedPage.rotationDegrees);
+        }
         if (disposed) return;
         url = URL.createObjectURL(blob);
         setSelectedUrl(url);
       })
-      .catch((caught) =>
-        setError(
-          caught instanceof Error
-            ? caught.message
-            : "No se pudo abrir la página.",
-        ),
-      );
+      .catch(() => {
+        if (!disposed) setPageError("No se pudo mostrar esta página. La captura sigue guardada; reintente abrirla.");
+      })
+      .finally(() => { if (!disposed) setPageLoading(false); });
     return () => {
       disposed = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [selectedPage, session]);
+  }, [selectedPage?.id, selectedPage?.sha256, selectedPage?.contentType,
+    selectedPage?.sourcePageNumber, selectedPage?.rotationDegrees, session?.id, pageRetry]);
 
   useEffect(
     () => () => {
@@ -389,6 +402,7 @@ export function ScanWorkspace({
       const blob = await dataSource.previewScanSession(session.id);
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setPreviewUrl(URL.createObjectURL(blob));
+      setShowFinalPreview(true);
       setSession(await dataSource.getScanSession(session.id));
     } catch (caught) {
       setError(
@@ -809,7 +823,7 @@ export function ScanWorkspace({
                     sessionId={session.id}
                     page={page}
                     active={selectedPage?.id === page.id}
-                    onSelect={() => setSelectedPageId(page.id)}
+                    onSelect={() => { setSelectedPageId(page.id); setShowFinalPreview(false); }}
                   />
                 </div>
               ))}
@@ -819,7 +833,7 @@ export function ScanWorkspace({
             <header>
               <div>
                 <strong>
-                  {selectedPage
+                  {previewUrl && showFinalPreview ? "PDF final · revise antes de confirmar" : selectedPage
                     ? `Página ${selectedPage.position + 1}`
                     : "Sin páginas"}
                 </strong>
@@ -829,7 +843,7 @@ export function ScanWorkspace({
                     : "Agregue una captura o archivo"}
                 </small>
               </div>
-              {selectedPage && (
+              {selectedPage && !(previewUrl && showFinalPreview) && (
                 <div>
                   <Button
                     size="sm"
@@ -865,6 +879,11 @@ export function ScanWorkspace({
               )}
             </header>
             <div className="scan-canvas">
+              {previewUrl && showFinalPreview ? (
+                <iframe src={previewUrl} title="Vista previa del PDF final" />
+              ) : <>
+              {pageLoading && <p role="status">Cargando página…</p>}
+              {pageError && <div role="alert"><p>{pageError}</p><Button variant="secondary" onClick={() => setPageRetry(value => value + 1)}>Reintentar página</Button></div>}
               {selectedUrl &&
                 selectedPage?.contentType.startsWith("image/") && (
                   <img
@@ -878,11 +897,12 @@ export function ScanWorkspace({
               {selectedUrl &&
                 selectedPage?.contentType === "application/pdf" && (
                   <iframe
-                    src={`${selectedUrl}#page=${selectedPage.sourcePageNumber ?? 1}`}
+                    src={`${selectedUrl}#page=1&view=Fit&toolbar=0`}
                     title={`Página ${selectedPage.position + 1}`}
                   />
                 )}
               {!selectedPage && <p>La sesión aún no contiene páginas.</p>}
+              </>}
             </div>
           </main>
           <aside className="scan-session-panel">
@@ -915,7 +935,9 @@ export function ScanWorkspace({
             {previewUrl && (
               <div className="scan-final-preview">
                 <strong>PDF listo para confirmar</strong>
-                <iframe src={previewUrl} title="Vista previa del PDF final" />
+                <Button variant="secondary" onClick={() => setShowFinalPreview(value => !value)}>
+                  {showFinalPreview ? "Volver a las páginas" : "Ver PDF final"}
+                </Button>
                 <a
                   className="button button--secondary"
                   href={previewUrl}

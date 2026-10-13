@@ -17,6 +17,8 @@ x-api-environment: &api-environment
   BootstrapAdmin__Email: "${BootstrapAdmin__Email:?BootstrapAdmin__Email es obligatorio}"
   BootstrapAdmin__FullName: "${BootstrapAdmin__FullName:?BootstrapAdmin__FullName es obligatorio}"
   BootstrapAdmin__Password: "${BootstrapAdmin__Password:?BootstrapAdmin__Password es obligatorio}"
+  PlatformAdmin__Email: "${PlatformAdmin__Email:-}"
+  PlatformAdmin__Password: "${PlatformAdmin__Password:-}"
   Storage__Provider: S3
   Storage__S3__BucketName: "${MINIO_BUCKET:-bufete-documentos}"
   Storage__S3__Region: us-east-1

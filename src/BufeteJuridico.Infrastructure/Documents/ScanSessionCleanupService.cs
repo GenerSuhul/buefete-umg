@@ -6,6 +6,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using BufeteJuridico.Infrastructure.Tenancy;
+using BufeteJuridico.Domain.Identity;
 
 namespace BufeteJuridico.Infrastructure.Documents;
 
@@ -41,7 +43,21 @@ internal sealed class ScanSessionCleanupService(
 
     private async Task CleanupAsync(CancellationToken cancellationToken)
     {
+        await using var registryScope = scopeFactory.CreateAsyncScope();
+        await using var central = registryScope.ServiceProvider.GetRequiredService<TenantRegistry>().OpenCentral();
+        var tenants = await central.Tenants.AsNoTracking().Where(item => item.Status == "Ready").ToListAsync(cancellationToken);
+        foreach (var tenant in tenants)
+        {
+            try { await CleanupTenantAsync(tenant, cancellationToken); }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            { logger.LogError(exception, "No se pudo limpiar las sesiones de la sede {TenantCode}.", tenant.Code); }
+        }
+    }
+
+    private async Task CleanupTenantAsync(Tenant tenant, CancellationToken cancellationToken)
+    {
         await using var scope = scopeFactory.CreateAsyncScope();
+        scope.ServiceProvider.GetRequiredService<TenantContext>().Select(tenant.Code, tenant.Name, tenant.DatabaseName);
         var dbContext = scope.ServiceProvider.GetRequiredService<BufeteDbContext>();
         var fileStorage = scope.ServiceProvider.GetRequiredService<IFileStorage>();
         var now = timeProvider.GetUtcNow();

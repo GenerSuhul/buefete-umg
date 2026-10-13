@@ -28,7 +28,10 @@ public sealed record AuthenticatedUserDto(
     string FullName,
     Guid? PhotoDocumentId,
     IReadOnlyList<string> Roles,
-    IReadOnlyList<string> Permissions);
+    IReadOnlyList<string> Permissions,
+    string TenantCode = "peten",
+    string TenantName = "Petén",
+    bool IsPlatformAdmin = false);
 
 public sealed record TokenResponse(
     string AccessToken,
@@ -44,7 +47,9 @@ public sealed record AccessTokenDescriptor(
     string FullName,
     Guid SecurityStamp,
     IReadOnlyList<string> Roles,
-    IReadOnlyList<string> Permissions);
+    IReadOnlyList<string> Permissions,
+    string TenantCode = "peten",
+    bool IsPlatformAdmin = false);
 
 public sealed record IssuedAccessToken(string Value, DateTimeOffset ExpiresAtUtc);
 

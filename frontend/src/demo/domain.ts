@@ -287,6 +287,7 @@ function newEnrollment(
     clinicCardIssuedDate: null,
     clinicCardExpirationDate: null,
     clinicCardDeliveredAtUtc: null,
+    concurrencyToken: id(),
     requirements: s.studentDefinitions
       .filter((d) => d.isActive)
       .map((d) => requirement(d)),
@@ -613,9 +614,21 @@ export function operate(
       break;
     }
     case "updateStudent": {
-      const st = student(s, a).student;
+      const profile = student(s, a);
+      const st = profile.student;
       concurrency(st, data);
       validatePerson({ ...st, ...data }, true);
+      if (data.practice) {
+        const practice = input(data.practice);
+        const en = requireValue(profile.enrollments.find(item => item.id === practice.enrollmentId));
+        if (en.concurrencyToken) concurrency({ concurrencyToken: en.concurrencyToken }, practice);
+        ensure(['CivilFamilyCases', 'ExternalInternship', 'AdHonoremSecretariat'].includes(text(practice.modality)), 'Seleccione una modalidad válida.');
+        ensure(!practice.startDate || !practice.endDate || text(practice.endDate) >= text(practice.startDate), 'La fecha final debe ser posterior a la inicial.');
+        ensure(!practice.startTime || !practice.endTime || text(practice.endTime) > text(practice.startTime), 'La hora final debe ser posterior a la inicial.');
+        editable(en, practice, ['modality', 'siteAddress', 'shift', 'practiceDays', 'startTime', 'endTime', 'startDate', 'endDate']);
+        if (practice.modality === 'ExternalInternship') en.siteName = nullable(practice.siteName);
+        en.concurrencyToken = id();
+      }
       editable(st, data, studentFields);
       st.ageAtRegistration = age(st.birthDate, st.registrationDate);
       st.concurrencyToken = id();

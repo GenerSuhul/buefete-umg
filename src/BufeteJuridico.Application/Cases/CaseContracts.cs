@@ -27,7 +27,8 @@ public sealed record CaseDetailDto(
     IReadOnlyList<TimelineEntryDto> Timeline,
     IReadOnlyList<MemorialDto> Memorials,
     IReadOnlyList<CasePresentationDto> Presentations,
-    IReadOnlyList<CourtNotificationDto> CourtNotifications);
+    IReadOnlyList<CourtNotificationDto> CourtNotifications,
+    BufeteJuridico.Application.Clients.ClientRestrictionStatus? Restriction = null);
 
 public sealed record CaseRequirementDto(
     Guid Id,

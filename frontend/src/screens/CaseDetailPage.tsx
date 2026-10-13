@@ -189,6 +189,7 @@ export function CaseDetailPage() {
   useEffect(() => {
     if (!data || !requestedStudentId || !canAssign || assignmentRequestHandled.current) return;
     assignmentRequestHandled.current = true;
+    if (data.restriction?.isRestricted || data.restriction?.hasValidIdentity === false) return;
     if (data.summary.status === "Closed" || data.summary.status === "Archived") return;
     if (data.summary.assignments.some((item) => item.studentId === requestedStudentId && item.status === "Active")) return;
     setAssignment({ studentId: requestedStudentId, isPrimary: true });
@@ -550,9 +551,10 @@ export function CaseDetailPage() {
     );
   const legalCase = data.summary;
   const isCaseOpen = legalCase.status !== "Closed" && legalCase.status !== "Archived";
-  const canModifyOpenCase = canEditCase && isCaseOpen;
-  const canAssignOpenCase = canAssign && isCaseOpen;
-  const canWriteOpenTimeline = canWriteTimeline && isCaseOpen;
+  const attentionBlocked = Boolean(data.restriction?.isRestricted || data.restriction?.hasValidIdentity === false);
+  const canModifyOpenCase = canEditCase && isCaseOpen && !attentionBlocked;
+  const canAssignOpenCase = canAssign && isCaseOpen && !attentionBlocked;
+  const canWriteOpenTimeline = canWriteTimeline && isCaseOpen && !attentionBlocked;
   const accepted = data.requirements.filter(
     (item) => item.status === "Accepted" || item.status === "NotApplicable",
   ).length;
@@ -600,6 +602,7 @@ export function CaseDetailPage() {
         }
       />
       <div className="case-overview-strip">
+        {attentionBlocked && <p role="alert" className="confirmation-warning">{data.restriction?.isRestricted ? `Veto global permanente. Referencia: ${data.restriction.reference}.` : 'El DPI histórico necesita corrección en la ficha del usuario.'} No se puede continuar la atención ni asignar alumnos. Puede consultar el historial o cerrar el caso. <Link to={`/personas/clientes/${legalCase.clientId}`}>Ver ficha del usuario</Link></p>}
         <div>
           <small>Estado actual</small>
           <strong>{translate(legalCase.status)}</strong>
@@ -624,7 +627,7 @@ export function CaseDetailPage() {
         <Badge tone={statusTone(legalCase.status)}>
           {translate(legalCase.status)}
         </Badge>
-        {canEditCase && legalCase.status !== "Archived" ? <Button
+        {canEditCase && legalCase.status !== "Archived" && !(attentionBlocked && legalCase.status === 'Closed') ? <Button
           variant="ghost"
           size="sm"
           onClick={() => {

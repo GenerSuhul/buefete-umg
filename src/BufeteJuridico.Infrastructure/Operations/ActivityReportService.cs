@@ -8,6 +8,7 @@ using BufeteJuridico.Domain.Reports;
 using BufeteJuridico.Infrastructure.Branding;
 using BufeteJuridico.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using BufeteJuridico.Infrastructure.Tenancy;
 
 namespace BufeteJuridico.Infrastructure.Operations;
 
@@ -15,7 +16,8 @@ internal sealed class ActivityReportService(
     BufeteDbContext dbContext,
     IEmailSender emailSender,
     ICurrentUser currentUser,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    TenantContext tenantContext)
     : IActivityReportService
 {
     private static readonly TimeZoneInfo ClinicTimeZone =
@@ -112,7 +114,7 @@ internal sealed class ActivityReportService(
             PeriodStart = start,
             PeriodEnd = end,
             Status = WeeklyReportStatus.Draft,
-            PrintableHtml = BuildReportHtml(start, end, activities, responsibleNames)
+            PrintableHtml = BuildReportHtml(start, end, activities, responsibleNames, tenantContext.Name)
         };
         foreach (var activity in activities)
             report.Activities.Add(new ReportActivity { SecretariatActivityId = activity.Id });
@@ -241,12 +243,13 @@ internal sealed class ActivityReportService(
         DateOnly start,
         DateOnly end,
         IReadOnlyList<SecretariatActivity> activities,
-        IReadOnlyDictionary<Guid, string> responsibleNames)
+        IReadOnlyDictionary<Guid, string> responsibleNames,
+        string tenantName)
     {
         var html = new StringBuilder()
             .Append("<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\"><title>Reporte semanal</title>")
             .Append("<style>body{font-family:Arial,sans-serif;margin:30px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #777;padding:8px;text-align:left}th{background:#eee}</style>")
-            .Append("</head><body>").Append(InstitutionalReportHeader.Html)
+            .Append("</head><body>").Append(InstitutionalReportHeader.Html(tenantName))
             .Append("<h1>Reporte semanal de actividades</h1><p>Período: ")
             .Append(start).Append(" al ").Append(end)
             .Append("</p><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Descripción</th><th>Responsable</th></tr></thead><tbody>");

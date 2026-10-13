@@ -20,6 +20,8 @@ internal sealed class JwtAccessTokenIssuer(IOptions<JwtOptions> options, TimePro
             new(ClaimTypes.Name, descriptor.Username),
             new(ClaimTypes.Email, descriptor.Email),
             new("full_name", descriptor.FullName),
+            new("tenant_code", descriptor.TenantCode),
+            new("platform_admin", descriptor.IsPlatformAdmin ? "true" : "false"),
             new(ClaimNames.SecurityStamp, descriptor.SecurityStamp.ToString()),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };

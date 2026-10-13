@@ -1,5 +1,6 @@
 using BufeteJuridico.Application.Authorization;
 using BufeteJuridico.Application.Cases;
+using BufeteJuridico.Application.Clients;
 using BufeteJuridico.Application.Common;
 using BufeteJuridico.Domain.Cases;
 using BufeteJuridico.Domain.Catalogs;
@@ -13,7 +14,8 @@ namespace BufeteJuridico.Infrastructure.Cases;
 internal sealed class CaseService(
     BufeteDbContext dbContext,
     ICurrentUser currentUser,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    IClientRestrictionService restrictions)
     : ICaseService
 {
     public async Task<PagedResult<CaseSummaryDto>> GetCasesAsync(
@@ -75,6 +77,7 @@ internal sealed class CaseService(
         EnsureStaffWrite();
         var client = await dbContext.Clients.SingleOrDefaultAsync(item => item.Id == request.ClientId && item.IsActive, cancellationToken)
             ?? throw new NotFoundException("No se encontró el cliente.");
+        await restrictions.EnsureAllowedAsync(client.Dpi, cancellationToken);
         var processType = await dbContext.ProcessTypes
             .Include(item => item.Requirements.Where(requirement => requirement.IsActive))
             .SingleOrDefaultAsync(item => item.Id == request.ProcessTypeId && item.IsActive, cancellationToken)
@@ -153,7 +156,7 @@ internal sealed class CaseService(
             .SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
             ?? throw new NotFoundException("No se encontró el expediente.");
         dbContext.Entry(legalCase).Property(item => item.ConcurrencyToken).OriginalValue = request.ConcurrencyToken;
-        EnsureCaseOpen(legalCase);
+        await EnsureCaseWritableAsync(legalCase, cancellationToken);
 
         var previousStatus = legalCase.Status;
         var previousStage = legalCase.Stage;
@@ -181,7 +184,7 @@ internal sealed class CaseService(
         var legalCase = await dbContext.LegalCases.Include(item => item.Requirements)
             .SingleOrDefaultAsync(item => item.Id == caseId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el expediente.");
-        EnsureCaseOpen(legalCase);
+        await EnsureCaseWritableAsync(legalCase, cancellationToken);
         var requirement = legalCase.Requirements.SingleOrDefault(item => item.Id == requirementId)
             ?? throw new NotFoundException("No se encontró el requisito del expediente.");
 
@@ -246,7 +249,7 @@ internal sealed class CaseService(
         var legalCase = await dbContext.LegalCases.Include(item => item.Assignments)
             .SingleOrDefaultAsync(item => item.Id == caseId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el expediente.");
-        EnsureCaseOpen(legalCase);
+        await EnsureCaseWritableAsync(legalCase, cancellationToken);
         var student = await dbContext.Students.SingleOrDefaultAsync(item =>
                 item.Id == request.StudentId &&
                 item.IsActive &&
@@ -299,7 +302,7 @@ internal sealed class CaseService(
         var legalCase = await dbContext.LegalCases.Include(item => item.Counterparties)
             .SingleOrDefaultAsync(item => item.Id == caseId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el expediente.");
-        EnsureCaseOpen(legalCase);
+        await EnsureCaseWritableAsync(legalCase, cancellationToken);
         Counterparty item;
         if (counterpartyId is null)
         {
@@ -371,7 +374,7 @@ internal sealed class CaseService(
             throw new ValidationException("Una actuación general no puede modificar el estado ni la etapa del expediente.");
         var legalCase = await dbContext.LegalCases.SingleOrDefaultAsync(item => item.Id == caseId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el expediente.");
-        EnsureCaseOpen(legalCase);
+        await EnsureCaseWritableAsync(legalCase, cancellationToken);
 
         if (request.DocumentId is Guid timelineDocumentId)
             await EnsureDocumentBelongsToCaseAsync(timelineDocumentId, caseId, cancellationToken);
@@ -410,7 +413,7 @@ internal sealed class CaseService(
         if (string.IsNullOrWhiteSpace(request.Title)) throw new ValidationException("El título del memorial es obligatorio.");
         await EnsureDocumentMatchesContextAsync(request.DocumentId, DocumentContextType.LegalCase, caseId, cancellationToken);
         var legalCase = await dbContext.LegalCases.SingleAsync(item => item.Id == caseId, cancellationToken);
-        EnsureCaseOpen(legalCase);
+        await EnsureCaseWritableAsync(legalCase, cancellationToken);
 
         var memorial = new Memorial
         {
@@ -447,7 +450,7 @@ internal sealed class CaseService(
         await EnsureCanWriteMemorialAsync(caseId, request.SubmittedByStudentId, cancellationToken);
         await EnsureDocumentMatchesContextAsync(request.DocumentId, DocumentContextType.Memorial, memorialId, cancellationToken);
         var memorial = await LoadMemorialAsync(caseId, memorialId, cancellationToken);
-        EnsureCaseOpen(memorial.LegalCase);
+        await EnsureCaseWritableAsync(memorial.LegalCase, cancellationToken);
         var version = new MemorialVersion
         {
             Memorial = memorial,
@@ -480,7 +483,7 @@ internal sealed class CaseService(
         EnsureStaffWrite(Permissions.CaseTimelineWrite);
         if (string.IsNullOrWhiteSpace(request.Observations)) throw new ValidationException("Las observaciones de revisión son obligatorias.");
         var memorial = await LoadMemorialAsync(caseId, memorialId, cancellationToken);
-        EnsureCaseOpen(memorial.LegalCase);
+        await EnsureCaseWritableAsync(memorial.LegalCase, cancellationToken);
         var version = memorial.Versions.SingleOrDefault(item => item.Id == request.VersionId)
             ?? throw new NotFoundException("No se encontró la versión del memorial.");
         var latestVersion = memorial.Versions.OrderByDescending(item => item.VersionNumber).First();
@@ -520,7 +523,7 @@ internal sealed class CaseService(
     {
         EnsureStaffWrite(Permissions.CaseTimelineWrite);
         var memorial = await LoadMemorialAsync(caseId, memorialId, cancellationToken);
-        EnsureCaseOpen(memorial.LegalCase);
+        await EnsureCaseWritableAsync(memorial.LegalCase, cancellationToken);
         if (memorial.Status != MemorialStatus.ApprovedForSignature)
             throw new ConflictException("El memorial debe estar aprobado para firma antes de presentarse.");
         if (string.IsNullOrWhiteSpace(request.Result)) throw new ValidationException("Debe registrar el resultado de la presentación.");
@@ -564,7 +567,7 @@ internal sealed class CaseService(
         await EnsureDocumentMatchesContextAsync(request.DocumentId, DocumentContextType.LegalCase, caseId, cancellationToken);
         var legalCase = await dbContext.LegalCases.SingleOrDefaultAsync(item => item.Id == caseId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el expediente.");
-        EnsureCaseOpen(legalCase);
+        await EnsureCaseWritableAsync(legalCase, cancellationToken);
 
         dbContext.CourtNotifications.Add(new CourtNotification
         {
@@ -615,6 +618,7 @@ internal sealed class CaseService(
         var legalCase = await dbContext.LegalCases.SingleOrDefaultAsync(item => item.Id == caseId, cancellationToken)
             ?? throw new NotFoundException("No se encontró el expediente.");
         if (legalCase.Status != LegalCaseStatus.Closed) throw new ConflictException("Solo se puede reabrir un expediente cerrado.");
+        await restrictions.EnsureCaseAllowedAsync(caseId, cancellationToken);
         legalCase.Status = LegalCaseStatus.Active;
         legalCase.Stage = "Reabierto";
         legalCase.ClosedAtUtc = null;
@@ -681,6 +685,12 @@ internal sealed class CaseService(
     private void EnsureStaffWrite(string permission = Permissions.CasesWrite)
     {
         if (!currentUser.HasPermission(permission)) throw new ForbiddenException("No tiene permiso para modificar expedientes.");
+    }
+
+    private async Task EnsureCaseWritableAsync(LegalCase legalCase, CancellationToken cancellationToken)
+    {
+        EnsureCaseOpen(legalCase);
+        await restrictions.EnsureCaseAllowedAsync(legalCase.Id, cancellationToken);
     }
 
     private static void EnsureCaseOpen(LegalCase legalCase)
@@ -805,7 +815,8 @@ internal sealed class CaseService(
             legalCase.Timeline.OrderBy(item => item.OccurredAtUtc).Select(Map).ToList(),
             memorials,
             presentations,
-            notifications);
+            notifications,
+            await restrictions.GetStatusAsync(legalCase.Client.Dpi, cancellationToken));
     }
 
     private CaseSummaryDto MapSummary(LegalCase item, IReadOnlyDictionary<Guid, Guid?>? photos = null) => new(

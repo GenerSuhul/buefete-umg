@@ -5,6 +5,7 @@ using BufeteJuridico.Application.Common;
 using BufeteJuridico.Application.Identity;
 using BufeteJuridico.Domain.Identity;
 using BufeteJuridico.Infrastructure.Persistence;
+using BufeteJuridico.Infrastructure.Tenancy;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -51,6 +52,7 @@ internal static class AuthenticationExtensions
 
         services.AddAuthorization(options =>
         {
+            options.AddPolicy("PlatformAdmin", policy => policy.RequireAuthenticatedUser().RequireClaim("platform_admin", "true"));
             foreach (var permission in Permissions.All)
                 options.AddPolicy(permission.Code, policy => policy.RequireClaim(ClaimNames.Permission, permission.Code));
         });
@@ -83,6 +85,13 @@ internal static class AuthenticationExtensions
         }
 
         var dbContext = context.HttpContext.RequestServices.GetRequiredService<BufeteDbContext>();
+        var tenant = context.HttpContext.RequestServices.GetRequiredService<TenantContext>();
+        var tokenTenant = context.Principal?.FindFirstValue("tenant_code") ?? "peten";
+        if (!string.Equals(tokenTenant, tenant.Code, StringComparison.Ordinal))
+        {
+            context.Fail("La sesión no pertenece a esta sede.");
+            return;
+        }
         var user = await dbContext.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == userId, context.HttpContext.RequestAborted);
         var now = DateTimeOffset.UtcNow;
         var today = DateOnly.FromDateTime(now.UtcDateTime);
@@ -93,6 +102,17 @@ internal static class AuthenticationExtensions
             context.Fail("La cuenta ya no está habilitada.");
             return;
         }
+
+        var platformClaim = context.Principal?.FindFirstValue("platform_admin") == "true";
+        if (platformClaim != user.IsPlatformAccount || (platformClaim &&
+            !await context.HttpContext.RequestServices.GetRequiredService<TenantRegistry>()
+                .IsPlatformAccountValidAsync(userId, securityStamp, context.HttpContext.RequestAborted)))
+        {
+            context.Fail("La cuenta de plataforma ya no está habilitada.");
+            return;
+        }
+        // Platform privileges cannot be granted or removed through a tenant's role editor.
+        if (platformClaim) return;
 
         var activeAssignments = await dbContext.UserRoles.AsNoTracking()
             .Where(item =>

@@ -16,6 +16,8 @@ import {
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "../routing/navigation";
 import { DetailTabs, InfoItem, Pagination } from "../components/domain/Shared";
+import { ClientRestrictionDialog } from '../components/domain/ClientRestrictionDialog';
+import { demoEnabled } from '../demo/client';
 import {
   Badge,
   Button,
@@ -92,6 +94,7 @@ export function ClientDetailPage() {
   const [tab, setTab] = useState("general");
   const [documentPage, setDocumentPage] = useState(1);
   const [incomeOpen, setIncomeOpen] = useState(false);
+  const [restrictionOpen, setRestrictionOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editStep, setEditStep] = useState(0);
   const [editForm, setEditForm] = useState(emptyClientEdit);
@@ -337,14 +340,18 @@ export function ClientDetailPage() {
         description={`${client.assistanceRequested} · Recepción ${formatDate(client.receptionDate)}`}
         actions={
           <>
-            {canWrite ? <Button variant="secondary" disabled={busy} onClick={openEdit}><Pencil size={17} />Editar datos</Button> : null}
-            {canWrite ? <Button variant="secondary" disabled={busy} onClick={changeAttention}>{client.isActive ? "Finalizar atención" : "Reactivar atención"}</Button> : null}
+            {canWrite ? <Button variant="secondary" disabled={busy || data.restriction?.isRestricted} onClick={openEdit}><Pencil size={17} />Editar datos</Button> : null}
+            {!demoEnabled && user?.roles.includes('Administrador') && !data.restriction?.isRestricted && client.dpi ? <Button variant="danger" onClick={() => setRestrictionOpen(true)}>Vetar atención</Button> : null}
+            {canWrite ? <Button variant="secondary" disabled={busy || (!client.isActive && data.restriction?.isRestricted)} onClick={changeAttention}>{client.isActive ? "Finalizar atención" : "Reactivar atención"}</Button> : null}
             {canDelete ? <Button variant="danger" disabled={busy} onClick={deleteClient}><Trash2 size={17} />Eliminar</Button> : null}
-            {canOpenCases ? <Button disabled={!client.isActive} onClick={() => navigate(`/expedientes?clientId=${id}`)}><FolderKanban size={17} />Abrir proceso</Button> : null}
+            {canOpenCases ? <Button disabled={!client.isActive || data.restriction?.isRestricted || data.restriction?.hasValidIdentity === false} onClick={() => navigate(`/expedientes?clientId=${id}`)}><FolderKanban size={17} />Abrir proceso</Button> : null}
           </>
         }
       />
       {!client.isActive && <div role="status" className="confirmation-warning">Sin atención vigente. La ficha y el historial se conservan. Reactiva la atención antes de abrir un nuevo proceso.</div>}
+      {data.restriction?.hasValidIdentity === false && <div role="status" className="confirmation-warning">El DPI histórico necesita corrección. Puede consultar el historial y editar la ficha; complete un CUI válido de 13 dígitos antes de continuar la atención.</div>}
+      {data.restriction?.isRestricted && <div role="alert" className="confirmation-warning">Atención bloqueada por veto global permanente para este DPI. El historial se conserva. Referencia: {data.restriction.reference}.</div>}
+      {restrictionOpen && <ClientRestrictionDialog dpi={client.dpi ?? ''} onClose={() => setRestrictionOpen(false)} onSaved={() => { setRestrictionOpen(false); reload(); notify.success({ title: 'Atención bloqueada', message: 'El veto permanente se aplica a todas las sedes de esta plataforma.' }); }} />}
       <div className="profile-layout">
         <Card className="profile-summary">
           <div className="profile-summary__avatar">
@@ -480,7 +487,7 @@ export function ClientDetailPage() {
               <SectionHeading
                 title="Papelería del usuario"
                 description="Archivos y versiones"
-                action={canAttachDocuments ?
+                action={canAttachDocuments && !data.restriction?.isRestricted ?
                   <Button size="sm" onClick={openDocuments}>
                     <FilePlus2 size={15} />
                     Adjuntar documento
@@ -568,7 +575,7 @@ export function ClientDetailPage() {
               <SectionHeading
                 title="Declaraciones juradas de ingresos"
                 description="Formatos y formularios firmados"
-                action={canWrite ?
+                action={canWrite && !data.restriction?.isRestricted ?
                   <Button size="sm" onClick={openIncome}>
                     <Plus size={15} />
                     Nueva declaración

@@ -2,12 +2,13 @@ using BufeteJuridico.Application.Common;
 using BufeteJuridico.Application.Queries;
 using BufeteJuridico.Domain.Cases;
 using BufeteJuridico.Domain.Documents;
+using BufeteJuridico.Domain.Identity;
 using BufeteJuridico.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace BufeteJuridico.Infrastructure.Queries;
 
-internal sealed class QueryService(BufeteDbContext dbContext) : IQueryService
+internal sealed class QueryService(BufeteDbContext dbContext, ICurrentUser currentUser) : IQueryService
 {
     public async Task<PagedResult<SearchResultDto>> SearchAsync(
         string term,
@@ -110,6 +111,17 @@ internal sealed class QueryService(BufeteDbContext dbContext) : IQueryService
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 200);
         var query = dbContext.AuditLogs.AsNoTracking().AsQueryable();
+        var isPlatformAdmin = currentUser.UserId is { } currentId && await dbContext.Users
+            .AnyAsync(user => user.Id == currentId && user.IsPlatformAccount, cancellationToken);
+        if (!isPlatformAdmin)
+        {
+            var platformAccountIds = dbContext.Users.Where(user => user.IsPlatformAccount)
+                .Select(user => user.Id.ToString());
+            query = query.Where(item => item.EntityType != nameof(Tenant)
+                && item.EntityType != nameof(BufeteJuridico.Domain.Clients.ClientRestriction)
+                && !item.EntityId.StartsWith("/api/v1/platform/")
+                && !(item.EntityType == nameof(UserAccount) && platformAccountIds.Contains(item.EntityId)));
+        }
         if (userId is not null) query = query.Where(item => item.UserId == userId);
         if (!string.IsNullOrWhiteSpace(entityType)) query = query.Where(item => item.EntityType == entityType.Trim());
         if (entityId is not null) query = query.Where(item => item.EntityId == entityId.ToString());

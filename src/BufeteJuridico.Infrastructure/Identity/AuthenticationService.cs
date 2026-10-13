@@ -5,6 +5,8 @@ using BufeteJuridico.Application.Identity;
 using BufeteJuridico.Domain.Auditing;
 using BufeteJuridico.Domain.Identity;
 using BufeteJuridico.Infrastructure.Persistence;
+using BufeteJuridico.Infrastructure.Tenancy;
+using BufeteJuridico.Application.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -17,7 +19,9 @@ internal sealed class AuthenticationService(
     IAccessTokenIssuer accessTokenIssuer,
     IOptions<JwtOptions> jwtOptions,
     ICurrentUser currentUser,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    TenantContext tenantContext,
+    TenantRegistry tenantRegistry)
     : IAuthenticationService
 {
     private const int MaximumFailedAttempts = 5;
@@ -37,7 +41,7 @@ internal sealed class AuthenticationService(
         var user = await LoadUserAsync(normalizedEmail, cancellationToken);
         var now = timeProvider.GetUtcNow();
 
-        if (user is null || !UserAccessRules.CanSignIn(user, DateOnly.FromDateTime(now.UtcDateTime)))
+        if (user is null || (user.IsPlatformAccount && tenantContext.Code != "peten") || !UserAccessRules.CanSignIn(user, DateOnly.FromDateTime(now.UtcDateTime)))
         {
             throw new AuthenticationException("Usuario o contraseña incorrectos.");
         }
@@ -168,6 +172,8 @@ internal sealed class AuthenticationService(
         string? ipAddress,
         CancellationToken cancellationToken)
     {
+        if (user.IsPlatformAccount && !await tenantRegistry.IsPlatformAccountValidAsync(user.Id, user.SecurityStamp, cancellationToken))
+            throw new AuthenticationException("La cuenta de plataforma ya no está habilitada.");
         var now = timeProvider.GetUtcNow();
         var activeUserRoles = user.Roles
             .Where(item =>
@@ -189,6 +195,12 @@ internal sealed class AuthenticationService(
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+        if (user.IsPlatformAccount)
+        {
+            roles = ["Administrador"];
+            permissions = Permissions.All.Select(item => item.Code).ToArray();
+        }
+
         var accessToken = accessTokenIssuer.Issue(new AccessTokenDescriptor(
             user.Id,
             user.Username,
@@ -196,7 +208,9 @@ internal sealed class AuthenticationService(
             user.FullName,
             user.SecurityStamp,
             roles,
-            permissions));
+            permissions,
+            tenantContext.Code,
+            user.IsPlatformAccount));
 
         var rawRefreshToken = GenerateRefreshToken();
         var refreshExpiry = now.AddDays(jwtOptions.Value.RefreshTokenDays);
@@ -224,7 +238,21 @@ internal sealed class AuthenticationService(
                 user.FullName,
                 user.PhotoDocumentId,
                 roles,
-                permissions));
+                permissions,
+                tenantContext.Code,
+                tenantContext.Name,
+                user.IsPlatformAccount));
+    }
+
+    internal async Task<TokenResponse> CreatePlatformSessionAsync(Guid userId, CancellationToken ct)
+    {
+        var user = await dbContext.Users.Include(item => item.Roles).ThenInclude(item => item.Role)
+            .ThenInclude(item => item.Permissions).ThenInclude(item => item.Permission)
+            .SingleAsync(item => item.Id == userId && item.IsPlatformAccount, ct);
+        var response = await IssueTokenPairAsync(user, currentUser.IpAddress, ct);
+        AddAuthenticationAudit("PlatformEnteredTenant", user, currentUser.IpAddress);
+        await dbContext.SaveChangesAsync(ct);
+        return response;
     }
 
     private async Task RemoveExpiredTokensAsync(Guid userId, DateTimeOffset now, CancellationToken cancellationToken)

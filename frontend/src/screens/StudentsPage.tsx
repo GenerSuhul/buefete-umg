@@ -8,6 +8,7 @@ import {
   UserRoundCheck,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { EnrollmentDocumentPicker } from "../components/documents/EnrollmentDocumentPicker";
 import { Link, useNavigate } from "../routing/navigation";
 import { FilterBar, Pagination } from "../components/domain/Shared";
 import {
@@ -52,6 +53,7 @@ const emptyForm = {
   dpi: "",
   semester: "9",
   studyShift: "Matutina",
+  practiceShift: "Matutina",
   residenceAddress: "",
   mobilePhone: "",
   homePhone: "",
@@ -61,7 +63,7 @@ const emptyForm = {
   immediateSupervisor: "",
   jobTitle: "",
   modality: "CivilFamilyCases",
-  initialStatus: "Draft",
+  initialStatus: "Submitted",
   siteName: "Bufete Popular UMG",
   siteAddress: "",
   practiceDays: "",
@@ -146,6 +148,8 @@ export function StudentsPage() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<StudentForm>(emptyForm);
   const [documentFiles, setDocumentFiles] = useState(emptyDocuments);
+  const [documentSources, setDocumentSources] = useState<Record<string, 'Upload' | 'Scanner'>>({});
+  const [profilePhoto, setProfilePhoto] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const loader = useMemo(
@@ -160,6 +164,8 @@ export function StudentsPage() {
     setForm((current) => ({ ...current, [key]: value }));
 
   const openRegistration = () => {
+    setProfilePhoto(null);
+    setDocumentSources({});
     setForm(emptyForm);
     setDocumentFiles(emptyDocuments());
     setFormError(null);
@@ -251,7 +257,7 @@ export function StudentsPage() {
           initialStatus: form.initialStatus,
           siteName: form.siteName.trim() || null,
           siteAddress: form.siteAddress.trim() || null,
-          shift: form.studyShift,
+          shift: form.practiceShift,
           practiceDays: form.practiceDays.trim() || null,
           startTime: form.startTime || null,
           endTime: form.endTime || null,
@@ -264,6 +270,8 @@ export function StudentsPage() {
           participationEndDate: form.endDate || null,
         },
       }));
+      try {
+      if (profilePhoto) await dataSource.setUserPhoto(registration.access.userAccountId, profilePhoto);
       await Promise.all(
         studentDocumentFields.map(async (field) => {
           const file = documentFiles[field.key];
@@ -273,6 +281,7 @@ export function StudentsPage() {
           if (!file || !requirement) return;
           const document = await dataSource.uploadDocument(feedbackHandled({
             file,
+            source: documentSources[field.key] ?? 'Upload',
             contextType: "Enrollment",
             contextId: registration.enrollment.id,
             label: requirement.label,
@@ -290,11 +299,17 @@ export function StudentsPage() {
           );
         }),
       );
+      } catch (reason) {
+        notify.warning({ title: 'Alumno creado; adjuntos pendientes', message: 'El perfil y la inscripción ya existen. Complete los adjuntos desde Papelería o Editar perfil; no repita la inscripción.', duration: 12000 });
+        setNewOpen(false);
+        navigate(`/personas/alumnos/${registration.student.id}`);
+        throw new Error(`La inscripción fue guardada, pero quedaron adjuntos pendientes: ${reason instanceof Error ? reason.message : 'revise la conexión'}`);
+      }
         return registration;
       })(), {
         loading: { title: "Inscribiendo alumno…", message: "Se está creando el perfil, el acceso y la papelería seleccionada." },
         success: { title: "Alumno inscrito", message: `${form.fullName.trim()} fue registrado con su acceso académico.` },
-        error: { title: "No se pudo inscribir al alumno" },
+        error: { title: "No se completaron todos los pasos" },
       });
       setNewOpen(false);
       await reload();
@@ -463,6 +478,7 @@ export function StudentsPage() {
             title="Identidad y datos académicos"
             description="El correo electrónico será la credencial de acceso."
           >
+            <FilePicker label="Fotografía de perfil del alumno" hint="JPG, PNG o WEBP. Independiente del requisito de tres fotografías físicas." accept="image/jpeg,image/png,image/webp" file={profilePhoto} onChange={setProfilePhoto} />
             <Field label="Nombre completo">
               <input
                 value={form.fullName}
@@ -593,7 +609,7 @@ export function StudentsPage() {
         )}
         {step === 2 && (
           <WizardStep
-            title="Solicitud de práctica"
+            title="Datos de la práctica"
             description="Defina la modalidad, el estado, el horario y el período de práctica."
           >
             <Field label="Modalidad">
@@ -611,8 +627,8 @@ export function StudentsPage() {
               </Select>
             </Field>
             <Field
-              label="Flujo de inscripción"
-              hint="Borrador permite completar datos; Presentada inicia la revisión. Los casos se asignan después de aprobar los requisitos."
+              label="Registro inicial"
+              hint="Presentada: papelería recibida, pendiente de revisión. Use Borrador sólo si el registro aún está incompleto."
             >
               <Select
                 value={form.initialStatus}
@@ -631,12 +647,14 @@ export function StudentsPage() {
               onChange={(value) => update("registrationDate", value)}
               required
             />
-            <Field label="Lugar asignado">
+            <ReadOnlyValue label="Sede responsable" value={user?.tenantName ?? 'Sede actual'} />
+            <Field label="Jornada de práctica"><Select value={form.practiceShift} onChange={(event) => update('practiceShift', event.target.value)}><option>Matutina</option><option>Vespertina</option><option>Nocturna</option></Select></Field>
+            {form.modality === 'ExternalInternship' && <Field label="Institución externa de práctica" hint="No cambia la sede responsable del alumno.">
               <input
                 value={form.siteName}
                 onChange={(event) => update("siteName", event.target.value)}
               />
-            </Field>
+            </Field>}
             <Field label="Dirección del lugar de práctica" wide>
               <textarea
                 value={form.siteAddress}
@@ -675,17 +693,17 @@ export function StudentsPage() {
             description="Adjunte los documentos disponibles."
           >
             {studentDocumentFields.map((field) => (
-              <FilePicker
+              <EnrollmentDocumentPicker
                 key={field.key}
                 label={field.label}
-                hint="PDF, JPG, PNG o WEBP"
                 file={documentFiles[field.key]}
-                onChange={(file) =>
+                onChange={(file, source) => {
+                  setDocumentSources((current) => ({ ...current, [field.key]: source }));
                   setDocumentFiles((current) => ({
                     ...current,
                     [field.key]: file,
-                  }))
-                }
+                  }));
+                }}
               />
             ))}
             <p className="wizard-inline-note">

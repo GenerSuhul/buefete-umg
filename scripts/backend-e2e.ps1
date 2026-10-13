@@ -753,7 +753,7 @@ try {
     $reportPrint = Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl/api/v1/reports/$($report.id)/print" -Headers @{ Authorization = "Bearer $adminToken" }
     if ([int]$reportPrint.StatusCode -ne 200 -or $reportPrint.Headers['Content-Type'] -notlike 'text/html*') { throw 'El reporte imprimible no está disponible.' }
     if ($reportPrint.Content -notmatch [regex]::Escape($adminProfile.fullName)) { throw 'El reporte imprimible no identifica al responsable por nombre.' }
-    if ($reportPrint.Content -notmatch 'data:image/png;base64,' -or $reportPrint.Content -notmatch 'Sede Petén') { throw 'El reporte no conserva logo y sede institucional.' }
+    if ($reportPrint.Content -notmatch 'data:image/png;base64,' -or [Net.WebUtility]::HtmlDecode($reportPrint.Content) -notmatch 'Sede Petén') { throw 'El reporte no conserva logo y sede institucional.' }
     $report = Invoke-Api -Method Post -Path "/api/v1/reports/$($report.id)/review" -Token $adminToken
     $report = Invoke-Api -Method Post -Path "/api/v1/reports/$($report.id)/send" -Token $adminToken -Body @{
         recipients = @('qa@example.test')

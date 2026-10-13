@@ -13,8 +13,13 @@ import {
 import { useConfirm, useNotify } from "../components/ui/Feedback";
 import { demoCall, demoEnabled, type DemoWorkspace } from "../demo/client";
 import { useAsyncData } from "../hooks/useAsyncData";
+import { NativeTenantsPage } from "./NativeTenantsPage";
 
 export function TenantsPage() {
+  return demoEnabled ? <DemoTenantsPage /> : <NativeTenantsPage />;
+}
+
+function DemoTenantsPage() {
   const { data, error, loading, reload } = useAsyncData(
     () => demoCall<DemoWorkspace>("getWorkspace"),
     [],

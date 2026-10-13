@@ -18,11 +18,33 @@ describe("controles de directorio", () => {
       : [{ value: "1", label: "Mario Pérez · 2026-001" }]);
     const onChange = vi.fn();
     render(<RelationLookup label="Cliente" value="" onChange={onChange} load={load} />);
-    fireEvent.change(screen.getByRole("textbox", { name: "Buscar cliente" }), { target: { value: "Ana" } });
+    fireEvent.focus(screen.getByRole("combobox", { name: "Cliente" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Cliente" }), { target: { value: "Ana" } });
     await waitFor(() => expect(load).toHaveBeenLastCalledWith("Ana"));
-    fireEvent.click(screen.getByRole("combobox", { name: "Cliente" }));
     fireEvent.click(await screen.findByRole("option", { name: "Ana López · 2026-002" }));
     expect(onChange).toHaveBeenCalledWith("2");
+  });
+});
+
+describe('Búsqueda accesible de relaciones', () => {
+  it('selecciona mediante teclado y Escape cierra sólo los resultados', async () => {
+    const onChange = vi.fn();
+    render(<RelationLookup label="Usuario" value="" onChange={onChange} load={async () => [{ value: 'a', label: 'Ana · DPI 1234 56789 0123' }]} />);
+    const input = screen.getByRole('combobox', { name: 'Usuario' });
+    fireEvent.focus(input);
+    await screen.findByRole('option', { name: /Ana/ });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onChange).toHaveBeenCalledWith('a');
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.focus(input); fireEvent.keyDown(input, { key: 'Escape' });
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+  });
+  it('permite reintentar una consulta fallida', async () => {
+    const load = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce([{ value: 'b', label: 'Beatriz' }]);
+    render(<RelationLookup label="Usuario" value="" onChange={vi.fn()} load={load} />);
+    fireEvent.focus(screen.getByRole('combobox', { name: 'Usuario' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Reintentar' }));
+    expect(await screen.findByRole('option', { name: 'Beatriz' })).toBeInTheDocument();
   });
 });
 

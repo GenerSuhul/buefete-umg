@@ -997,6 +997,59 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                     b.ToTable("clients", "bufete");
                 });
 
+            modelBuilder.Entity("BufeteJuridico.Domain.Clients.ClientRestriction", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Dpi")
+                        .IsRequired()
+                        .HasMaxLength(13)
+                        .HasColumnType("character varying(13)");
+
+                    b.Property<string>("IssuedByName")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("SourceTenantCode")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTimeOffset?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Dpi")
+                        .IsUnique();
+
+                    b.ToTable("client_restrictions", "bufete", t =>
+                        {
+                            t.HasCheckConstraint("CK_client_restrictions_dpi", "\"Dpi\" ~ '^[0-9]{13}$'");
+                        });
+                });
+
             modelBuilder.Entity("BufeteJuridico.Domain.Clients.IncomeDeclaration", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1563,6 +1616,59 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                     b.ToTable("role_permissions", "bufete");
                 });
 
+            modelBuilder.Entity("BufeteJuridico.Domain.Identity.Tenant", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid>("ConcurrencyToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DatabaseName")
+                        .IsRequired()
+                        .HasMaxLength(63)
+                        .HasColumnType("character varying(63)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("character varying(160)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<DateTimeOffset?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("tenants", "bufete");
+                });
+
             modelBuilder.Entity("BufeteJuridico.Domain.Identity.UserAccount", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1596,6 +1702,9 @@ namespace BufeteJuridico.Infrastructure.Persistence.Migrations
                         .HasColumnType("boolean");
 
                     b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsPlatformAccount")
                         .HasColumnType("boolean");
 
                     b.Property<DateTimeOffset?>("LockoutEndUtc")
