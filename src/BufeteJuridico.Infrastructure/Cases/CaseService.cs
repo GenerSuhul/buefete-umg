@@ -2,6 +2,7 @@ using BufeteJuridico.Application.Authorization;
 using BufeteJuridico.Application.Cases;
 using BufeteJuridico.Application.Clients;
 using BufeteJuridico.Application.Common;
+using BufeteJuridico.Application.Students;
 using BufeteJuridico.Domain.Cases;
 using BufeteJuridico.Domain.Catalogs;
 using BufeteJuridico.Domain.Documents;
@@ -15,7 +16,8 @@ internal sealed class CaseService(
     BufeteDbContext dbContext,
     ICurrentUser currentUser,
     TimeProvider timeProvider,
-    IClientRestrictionService restrictions)
+    IClientRestrictionService restrictions,
+    IStudentDisciplineService studentDiscipline)
     : ICaseService
 {
     public async Task<PagedResult<CaseSummaryDto>> GetCasesAsync(
@@ -257,6 +259,7 @@ internal sealed class CaseService(
                     enrollment.StudentId == item.Id && enrollment.Status == EnrollmentStatus.Approved),
             cancellationToken)
             ?? throw new ConflictException("El alumno debe estar activo y tener una inscripción aprobada antes de recibir casos.");
+        await studentDiscipline.EnsureNotBlockedAsync(student.Dpi, cancellationToken);
 
         if (legalCase.Assignments.Any(item => item.StudentId == request.StudentId && item.Status == CaseAssignmentStatus.Active))
             throw new ConflictException("El alumno ya está asignado al expediente.");

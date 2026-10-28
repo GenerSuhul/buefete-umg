@@ -4,7 +4,7 @@ import { Button } from '../ui';
 
 export type LookupOption = { value: string; label: string };
 
-export function RelationLookup({ label, value, onChange, load, emptyLabel = 'Seleccione un registro', required = false }: { label: string; value: string; onChange: (value: string) => void; load: (search: string) => Promise<LookupOption[]>; emptyLabel?: string; required?: boolean }) {
+export function RelationLookup({ label, value, onChange, load, emptyLabel = 'Seleccione un registro', placeholder = 'Buscar por nombre, DPI o referencia…', required = false }: { label: string; value: string; onChange: (value: string) => void; load: (search: string) => Promise<LookupOption[]>; emptyLabel?: string; placeholder?: string; required?: boolean }) {
   const [search, setSearch] = useState('');
   const [options, setOptions] = useState<LookupOption[]>([]);
   const [selected, setSelected] = useState<LookupOption | null>(null);
@@ -57,7 +57,7 @@ export function RelationLookup({ label, value, onChange, load, emptyLabel = 'Sel
           value={open ? search : (value && selected?.value === value ? selected.label : search)}
           onFocus={() => setOpen(true)} onClick={() => setOpen(true)}
           onChange={(event) => { setSearch(event.target.value); setLoading(true); setOpen(true); if (value) onChange(''); }}
-          placeholder="Buscar por nombre, DPI o referencia…" autoComplete="off"
+          placeholder={placeholder} autoComplete="off"
           onKeyDown={(event) => {
             if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); }
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

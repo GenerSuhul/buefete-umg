@@ -10,6 +10,7 @@ public enum DeletedRecordType
 }
 
 public sealed record DeleteRecordRequest(string? Reason);
+public sealed record PurgeRecordRequest(string Reference);
 
 public sealed record DeletedRecordDto(
     Guid Id,
@@ -33,4 +34,20 @@ public interface IDeletedRecordService
         CancellationToken cancellationToken);
 
     Task RestoreAsync(DeletedRecordType type, Guid id, CancellationToken cancellationToken);
+
+    Task<PurgePreviewDto> PreviewPurgeAsync(DeletedRecordType type, Guid id, CancellationToken cancellationToken);
+
+    Task<PurgeResultDto> PurgeAsync(DeletedRecordType type, Guid id, string reference, CancellationToken cancellationToken);
+
+    Task<int> RetryPendingStorageDeletesAsync(CancellationToken cancellationToken);
 }
+
+public sealed record PurgePreviewDto(
+    DeletedRecordType Type,
+    Guid Id,
+    string Reference,
+    int DocumentCount,
+    long DocumentBytes,
+    string? BlockReason);
+
+public sealed record PurgeResultDto(int DocumentCount, long DocumentBytes, int PendingStorageDeletes);

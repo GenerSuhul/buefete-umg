@@ -33,6 +33,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (dataSource.mode === 'mock' || !readAuthSession()) return;
+    let active = true;
+    dataSource.getCurrentUser().then((profile) => {
+      if (!active || readAuthSession()?.user.id !== profile.id) return;
+      const summary = { fullName: profile.fullName, email: profile.email, photoDocumentId: profile.photoDocumentId };
+      setUser((current) => current?.id === profile.id ? { ...current, ...summary } : current);
+      updateAuthSessionUser(summary);
+    }).catch(() => { /* The request handler reports session expiry; retain the profile on transient failures. */ });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
     const sessionExpired = () => {
       setUser(null);
       notify.warning({ title: 'Tu sesión finalizó', message: 'Vuelve a iniciar sesión para continuar.', duration: 8000 });

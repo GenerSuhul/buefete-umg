@@ -45,13 +45,16 @@ export const feedbackBus = {
 export function humanizeOperationError(error: unknown) {
   const raw = error instanceof Error ? error.message : "No se pudo completar la operación.";
   const message = raw.toLowerCase();
+  if (message.includes("one or more validation errors"))
+    return "Revise los datos del formulario y vuelva a guardar.";
   if (message.includes("fetch") || message.includes("network") || message.includes("conexión"))
     return "No se pudo conectar con el servidor. Verifica la conexión e inténtalo nuevamente.";
   if (message.includes("403") || message.includes("forbidden") || message.includes("permis"))
     return "No tienes permisos para realizar esta acción.";
   if (message.includes("401") || message.includes("credencial") || message.includes("contraseña incorrect"))
     return "Verifica tu correo electrónico y contraseña.";
-  if (message.includes("409") || message.includes("ya existe") || message.includes("duplic"))
+  if (message.includes("ya existe")) return raw;
+  if (message.includes("409") || message.includes("duplic"))
     return "Ya existe un registro con estos datos. Revisa la información ingresada.";
   if (message.includes("tamaño") || message.includes("too large") || message.includes("25 mb"))
     return "El archivo supera el tamaño permitido.";

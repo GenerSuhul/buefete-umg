@@ -18,6 +18,14 @@ public sealed class JwtOptions
 }
 
 public sealed record LoginRequest(string Email, string Password);
+public sealed record PlatformPasswordRecoveryStartRequest(string Email);
+public sealed record PlatformPasswordRecoveryChallenge(string ChallengeToken, string Message);
+public sealed record PlatformPasswordRecoveryCompleteRequest(string ChallengeToken, string Code, string NewPassword);
+public interface IPlatformPasswordRecoveryService
+{
+    Task<PlatformPasswordRecoveryChallenge> StartAsync(PlatformPasswordRecoveryStartRequest request, CancellationToken cancellationToken);
+    Task CompleteAsync(PlatformPasswordRecoveryCompleteRequest request, CancellationToken cancellationToken);
+}
 
 public sealed record RefreshRequest(string RefreshToken);
 

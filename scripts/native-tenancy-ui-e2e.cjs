@@ -40,6 +40,8 @@ async function main() {
     steps.push('Superusuario: inicio de sesión nativo');
     await page.goto(`${base}/sedes`);
     await page.getByRole('heading', { name: 'Bufetes y sedes' }).waitFor();
+    await page.locator('[data-module="platform"] a[href="/sedes"]').waitFor();
+    if (await page.locator('nav a[href="/vetos"]').count() !== 1) throw new Error('Vetos globales duplicados o ausentes.');
     await page.getByText('Código: peten', { exact: false }).waitFor();
     await page.getByLabel('Nombre de la sede', { exact: true }).fill('Sede QA navegador');
     await page.getByLabel('Código de acceso', { exact: true }).fill(code);
@@ -65,13 +67,14 @@ async function main() {
     await page.locator('.tenant-row').filter({ hasText: code }).getByRole('button', { name: 'Entrar a la sede' }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Entrar a la sede' }).click();
     await page.waitForURL(url => url.pathname === '/');
-    await page.getByText(/^(Sede )?Sede QA nombre actualizado$/, { exact: true }).waitFor();
+    await page.locator('.sidebar-seat-context strong').getByText('Sede QA nombre actualizado', { exact: true }).waitFor();
     steps.push('Superusuario: cambio de contexto a nueva sede');
     await resetSession();
     await login(email, password, code);
     await page.goto(`${base}/usuarios`);
     await page.getByRole('button', { name: 'Crear personal' }).waitFor();
-    if (await page.getByRole('link', { name: /Sedes/ }).count()) throw new Error('Administrador local ve el módulo global.');
+    if (await page.locator('[data-module="platform"]').count()) throw new Error('Administrador local ve el módulo global.');
+    await page.locator('[data-module="administration"] a[href="/vetos"]').waitFor();
     await page.getByRole('button', { name: 'Crear personal' }).click();
     const userDialog = page.getByRole('dialog');
     await userDialog.getByLabel('Nombre completo', { exact: true }).fill('Secretaría QA navegador');
@@ -87,6 +90,10 @@ async function main() {
     await page.goto(`${base}/sedes`);
     await page.getByText('La administración de sedes requiere una cuenta de superusuario.', { exact: true }).waitFor();
     steps.push('Administrador local: acceso a cuentas y rechazo de módulo global');
+    await resetSession();
+    await login(`secretaria-${email}`, password, code);
+    if (await page.locator('nav a[href="/vetos"], [data-module="platform"]').count()) throw new Error('Secretaría ve controles restringidos.');
+    steps.push('Secretaría: navegación sin administración global ni vetos');
     await resetSession();
     await login(configuration.PlatformAdmin__Email, configuration.PlatformAdmin__Password, 'peten');
     await page.goto(`${base}/sedes`);

@@ -18,7 +18,7 @@ export interface DemoWorkspace {
 async function encode(value: unknown): Promise<unknown> {
   if (value instanceof File) {
     if (value.size > 3 * 1024 * 1024)
-      throw new Error("La demo admite archivos de hasta 3 MB.");
+      throw new Error("Se admiten archivos de hasta 3 MB.");
     const bytes = new Uint8Array(await value.arrayBuffer());
     let binary = "";
     for (let i = 0; i < bytes.length; i += 8192)

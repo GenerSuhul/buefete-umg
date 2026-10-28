@@ -8,6 +8,7 @@ import type {
   StudentRequirement,
   UserSummary,
 } from "../types/domain";
+import { isLegalStudyOperation, legalStudyOperation } from './legalStudy';
 import {
   audit,
   DemoError,
@@ -128,7 +129,6 @@ const studentFields = [
   "birthDate",
   "studentCardNumber",
   "dpi",
-  "semester",
   "studyShift",
   "workplace",
   "workPhone",
@@ -153,12 +153,10 @@ function validatePerson(data: Input, academic = false) {
         /^(?:502)?\d{8}$/.test(String(data[field]).replace(/\D/g, "")),
         "Revise el número de teléfono.",
       );
-  if (academic)
-    ensure(
-      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(data.email)) &&
-        text(data.studentCardNumber),
-      "Indique carné y correo válidos.",
-    );
+  if (academic) {
+    ensure(text(data.studentCardNumber), "Indique el carné del alumno.");
+    ensure(!text(data.email) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(data.email)), "Revise el correo electrónico.");
+  }
 }
 function addTimeline(
   s: DemoState,
@@ -262,8 +260,8 @@ function newEnrollment(
   );
   const initial = text(data.initialStatus) || "Draft";
   ensure(
-    ["Draft", "Submitted"].includes(initial),
-    "La inscripción debe comenzar en borrador o presentada.",
+    initial === 'Draft',
+    "Registre primero al alumno en borrador y complete los documentos antes de presentar la inscripción.",
   );
   return {
     id: id(),
@@ -271,14 +269,14 @@ function newEnrollment(
     modality: data.modality as Enrollment["modality"],
     status: initial as Enrollment["status"],
     siteName: nullable(data.siteName),
-    siteAddress: nullable(data.siteAddress),
+    siteAddress: data.modality === 'CivilFamilyCases' ? null : nullable(data.siteAddress),
     shift: nullable(data.shift),
     practiceDays: nullable(data.practiceDays),
     startTime: nullable(data.startTime),
     endTime: nullable(data.endTime),
     startDate: nullable(data.startDate),
     endDate: nullable(data.endDate),
-    submittedAtUtc: initial === "Submitted" ? now() : null,
+    submittedAtUtc: null,
     admittedAtUtc: null,
     resolvedAtUtc: null,
     resolutionNotes: null,
@@ -316,6 +314,7 @@ export function operate(
   method: string,
   args: unknown[],
 ): unknown {
+  if (isLegalStudyOperation(method)) return legalStudyOperation(s, u, method, args);
   const a = text(args[0]),
     b = text(args[1]),
     data = input(args[1]),
@@ -510,7 +509,7 @@ export function operate(
         s.clients.flatMap((p) => p.incomeDeclarations).find((d) => d.id === a),
       );
       return {
-        __html: `<!doctype html><html lang="es"><meta charset="utf-8"><title>Declaración</title><body><img src="/umg.png" width="72" alt="UMG"><h1>Bufete Popular UMG</h1><h2>Declaración de ingresos · DEMO</h2><p>${escape(d.fullName)} · DPI ${escape(d.dpi)}</p><p>${escape(d.residenceAddress)}</p><p>Ingresos declarados: Q ${escape(d.salaryAmount)} · ${escape(d.salaryFrequency)}</p><p>${escape(d.place)} · ${escape(d.declarationDate)}</p><p>Firma: ____________________________</p></body></html>`,
+        __html: `<!doctype html><html lang="es"><meta charset="utf-8"><title>Declaración</title><body><img src="/umg.png" width="72" alt="UMG"><h1>Bufete Popular UMG</h1><h2>Declaración de ingresos</h2><p>${escape(d.fullName)} · DPI ${escape(d.dpi)}</p><p>${escape(d.residenceAddress)}</p><p>Ingresos declarados: Q ${escape(d.salaryAmount)} · ${escape(d.salaryFrequency)}</p><p>${escape(d.place)} · ${escape(d.declarationDate)}</p><p>Firma: ____________________________</p></body></html>`,
       };
     }
     case "listStudents":
@@ -561,13 +560,13 @@ export function operate(
         !s.students.some(
           (x) =>
             x.student.studentCardNumber === p.studentCardNumber ||
-            x.student.email === p.email,
+            (text(p.email) && x.student.email === p.email),
         ),
         "El carné o correo ya está registrado.",
       );
       const st = {
         id: id(),
-        userAccountId: id(),
+        userAccountId: opts.access ? id() : null,
         photoDocumentId: null,
         concurrencyToken: id(),
         isActive: true,
@@ -586,7 +585,7 @@ export function operate(
       st.ageAtRegistration = age(st.birthDate, st.registrationDate);
       const en = newEnrollment(s, st.id, input(opts.enrollment)),
         ac = input(opts.access);
-      const account: UserSummary = {
+      const account: UserSummary | null = st.userAccountId ? {
         id: st.userAccountId!,
         username: st.email,
         email: st.email,
@@ -598,18 +597,18 @@ export function operate(
         photoDocumentId: null,
         roles: ["Alumno"],
         accessStatus: "Active",
-      };
-      s.users.push(account);
+      } : null;
+      if (account) s.users.push(account);
       s.students.unshift({ student: st, enrollments: [en], cases: [] });
       result = {
         student: st,
         enrollment: en,
-        access: {
+        access: account ? {
           userAccountId: account.id,
           username: account.username,
           email: account.email,
           isActive: true,
-        },
+        } : null,
       };
       break;
     }
@@ -638,6 +637,7 @@ export function operate(
     case "setStudentActive": {
       const st = student(s, a).student;
       ensure(typeof args[1] === "boolean", "Estado inválido.");
+      if (args[1]) ensure(!s.studentLegalStudies?.[a]?.closure, 'La práctica del alumno ya está cerrada; no puede reactivarse.');
       if (!args[1])
         ensure(
           !s.cases.some((c) =>
@@ -655,6 +655,7 @@ export function operate(
     }
     case "createEnrollment": {
       const p = student(s, a);
+      ensure(p.student.isActive && !s.studentLegalStudies?.[a]?.closure, "La práctica del alumno ya fue cerrada.");
       ensure(
         !p.enrollments.some(
           (e) => !["Rejected", "Completed"].includes(e.status),
@@ -673,6 +674,9 @@ export function operate(
         enrollmentTransitions[en.status]?.includes(status),
         "Seleccione el siguiente estado válido del proceso de inscripción.",
       );
+      if (status === 'Submitted')
+        ensure(en.requirements.filter(r => r.isRequired && r.kind === 'Document').every(r => r.documentId && ['Submitted','Accepted'].includes(r.status)),
+          'Complete todos los documentos obligatorios antes de presentar la inscripción.');
       if (status === "Approved")
         ensure(
           en.requirements
@@ -1235,6 +1239,11 @@ export function operate(
         a !== rootId && a !== u.id,
         "No puede suspender la cuenta actual ni la de plataforma.",
       );
+      if (args[1] === true) {
+        const linked = s.students.find(p => p.student.userAccountId === a);
+        ensure(!linked || linked.student.isActive && !s.studentLegalStudies?.[linked.student.id]?.closure,
+          'La práctica del alumno está cerrada; su acceso no puede reactivarse.');
+      }
       x.isActive = args[1] === true;
       x.accessStatus = x.isActive ? "Active" : "Suspended";
       result = x;
@@ -1271,7 +1280,7 @@ export function operate(
       ensure(
         u.id !== rootId ||
           text(opts.email).toLowerCase() === u.email.toLowerCase(),
-        "El correo de plataforma no se modifica desde la demo.",
+        "El correo de plataforma se administra mediante soporte.",
       );
       u.fullName = text(opts.fullName);
       u.email = text(opts.email);
@@ -1306,7 +1315,7 @@ export function operate(
           ["Document", "Data", "Condition"].includes(d.kind),
         "Complete código, etiqueta y tipo.",
       );
-      if (d.scope === "LegalProcess")
+      if (d.scope === "Process")
         requireValue(
           s.processes.find((p) => p.id === d.processTypeId),
         ).requirements.push(d);
@@ -1432,7 +1441,7 @@ export function operate(
         periodStart: a,
         periodEnd: b,
         status: "Draft" as const,
-        printableHtml: `<article><img src="/umg.png" width="60" alt="UMG"><h1>Bufete Popular UMG · DEMO</h1><h2>Informe de actividades</h2><p>${a} al ${b}</p>${activities.map((x) => `<p><b>${escape(x.activityType)}</b> · ${escape(x.occurredAtUtc)}<br>${escape(x.description)}</p>`).join("") || "<p>No se registraron actividades en este período.</p>"}</article>`,
+        printableHtml: `<article><img src="/umg.png" width="60" alt="UMG"><h1>Bufete Popular UMG</h1><h2>Informe de actividades</h2><p>${a} al ${b}</p>${activities.map((x) => `<p><b>${escape(x.activityType)}</b> · ${escape(x.occurredAtUtc)}<br>${escape(x.description)}</p>`).join("") || "<p>No se registraron actividades en este período.</p>"}</article>`,
         reviewedAtUtc: null,
         reviewedByUserId: null,
         sentAtUtc: null,
@@ -1455,7 +1464,7 @@ export function operate(
     }
     case "sendReport":
       throw new DemoError(
-        "El envío de correo está deshabilitado en la demo. Puede revisar, imprimir y descargar el reporte.",
+        "El envío de correo no está configurado. Puede revisar, imprimir y descargar el reporte.",
       );
     case "listAudit":
       return paged(
@@ -1588,7 +1597,7 @@ export function operate(
     }
     default:
       throw new DemoError(
-        "Esta operación no está disponible en el entorno de demostración.",
+        "Esta operación no está disponible en esta instalación.",
         400,
       );
   }

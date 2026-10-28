@@ -4,16 +4,18 @@ using BufeteJuridico.Domain.Cases;
 using BufeteJuridico.Domain.Clients;
 using BufeteJuridico.Domain.Common;
 using BufeteJuridico.Domain.Documents;
+using BufeteJuridico.Application.Documents;
 using BufeteJuridico.Domain.Students;
 using BufeteJuridico.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
 namespace BufeteJuridico.Infrastructure.Administration;
 
-internal sealed class DeletedRecordService(
+internal sealed partial class DeletedRecordService(
     BufeteDbContext dbContext,
     ICurrentUser currentUser,
-    TimeProvider timeProvider) : IDeletedRecordService
+    TimeProvider timeProvider,
+    IFileStorage fileStorage) : IDeletedRecordService
 {
     public async Task DeleteAsync(
         DeletedRecordType type,

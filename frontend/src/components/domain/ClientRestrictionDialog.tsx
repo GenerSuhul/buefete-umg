@@ -16,10 +16,10 @@ export function ClientRestrictionDialog({ dpi = '', onClose, onSaved }: { dpi?: 
     if (!valid || busy) return;
     setBusy(true); setError('');
     try { await clientRestrictions.create(identity, confirmation, reason.trim()); onSaved(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo emitir el veto. Intente nuevamente.'); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo agregar a lista negra. Intente nuevamente.'); }
     finally { setBusy(false); }
   };
-  return <Modal open title="Veto global permanente" description="Bloquea la atención a este DPI en todas las sedes de esta plataforma." onClose={() => { if (!busy) onClose(); }} footer={<><Button variant="secondary" disabled={busy} onClick={onClose}>Cancelar</Button><Button variant="danger" disabled={!valid || busy} onClick={save}>{busy ? 'Registrando veto…' : 'Confirmar veto permanente'}</Button></>}>
+  return <Modal open title="Lista negra permanente" description="Bloquea la atención a este DPI en todas las sedes de esta plataforma." onClose={() => { if (!busy) onClose(); }} footer={<><Button variant="secondary" disabled={busy} onClick={onClose}>Cancelar</Button><Button variant="danger" disabled={!valid || busy} onClick={save}>{busy ? 'Registrando bloqueo…' : 'Confirmar ingreso a lista negra'}</Button></>}>
     <div className="form-grid">
       <p className="confirmation-warning field--wide">Esta acción no tiene vencimiento ni opción de deshacer. No elimina el historial. Verifique el DPI y la autorización institucional antes de continuar.</p>
       {error && <div role="alert" className="form-error field--wide">{error}</div>}

@@ -102,6 +102,17 @@ internal static class AuthenticationExtensions
             context.Fail("La cuenta ya no está habilitada.");
             return;
         }
+        var studentDpi = await dbContext.Students.AsNoTracking()
+            .Where(student => student.UserAccountId == userId)
+            .Select(student => student.Dpi)
+            .SingleOrDefaultAsync(context.HttpContext.RequestAborted);
+        if (studentDpi is not null && await context.HttpContext.RequestServices
+            .GetRequiredService<TenantRegistry>()
+            .IsStudentSuspendedAsync(studentDpi, context.HttpContext.RequestAborted))
+        {
+            context.Fail("La cuenta del alumno está suspendida en todas las sedes.");
+            return;
+        }
 
         var platformClaim = context.Principal?.FindFirstValue("platform_admin") == "true";
         if (platformClaim != user.IsPlatformAccount || (platformClaim &&

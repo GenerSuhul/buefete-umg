@@ -1,3 +1,6 @@
+import { apiProblemMessage, type ApiProblem } from './apiProblem';
+import type { StudentLegalStudy, AddLegalStudyReview, DeliverLegalStudy, PracticeClosure } from '../types/studentLegalStudy';
+import type { StudentDiscipline, CreateStudentDiscipline } from '../types/studentDiscipline';
 import type {
   Activity,
   AuditLog,
@@ -107,7 +110,15 @@ export interface DataSource {
   listStudents(options?: ListOptions): Promise<PagedResult<Student>>;
   listStudentAssignmentCandidates(caseId: string, search?: string): Promise<PagedResult<StudentAssignmentCandidate>>;
   getStudent(id: string): Promise<StudentProfile>;
+  getStudentLegalStudy(id: string): Promise<StudentLegalStudy>;
+  addStudentLegalReview(id: string, input: AddLegalStudyReview): Promise<StudentLegalStudy>;
+  deliverStudentLegalStudy(id: string, input: DeliverLegalStudy): Promise<StudentLegalStudy>;
+  listPracticeClosures(options?: ListOptions): Promise<PagedResult<PracticeClosure>>;
   registerStudent(input: Record<string, unknown>): Promise<StudentRegistration>;
+  listStudentDisciplines(id: string): Promise<StudentDiscipline[]>;
+  downloadStudentDisciplineDocument(studentId: string, disciplineId: string): Promise<Blob>;
+  createStudentDiscipline(id: string, input: CreateStudentDiscipline): Promise<StudentDiscipline>;
+  revokeStudentDiscipline(id: string, disciplineId: string, reason: string): Promise<StudentDiscipline>;
   provisionStudentAccess(
     studentId: string,
     input: Record<string, unknown>,
@@ -210,6 +221,9 @@ export interface DataSource {
   deleteCase(id: string, reason?: string): Promise<void>;
   listDeletedRecords(options?: ListOptions & { type?: DeletedRecordType }): Promise<PagedResult<DeletedRecord>>;
   restoreDeletedRecord(type: DeletedRecordType, id: string): Promise<void>;
+  previewPurgeDeletedRecord(type: DeletedRecordType, id: string): Promise<{ reference: string; documentCount: number; documentBytes: number; blockReason: string | null }>;
+  purgeDeletedRecord(type: DeletedRecordType, id: string, reference: string): Promise<{ documentCount: number; documentBytes: number; pendingStorageDeletes: number }>;
+  retryPendingStorageDeletes(): Promise<{ pending: number }>;
   listDocuments(
     options?: ListOptions & { contextType?: string; contextId?: string },
   ): Promise<PagedResult<DocumentRecord>>;
@@ -573,6 +587,10 @@ class MockDataSource implements DataSource {
     if (!result) throw new Error("Alumno no encontrado.");
     return clone(result);
   }
+  async getStudentLegalStudy(_id: string): Promise<StudentLegalStudy> { return { reviews: [], closure: null }; }
+  async addStudentLegalReview(_id: string, _input: AddLegalStudyReview): Promise<StudentLegalStudy> { throw new Error('Utilice la API real para registrar revisiones.'); }
+  async deliverStudentLegalStudy(_id: string, _input: DeliverLegalStudy): Promise<StudentLegalStudy> { throw new Error('Utilice la API real para cerrar la práctica.'); }
+  async listPracticeClosures(_options: ListOptions = {}): Promise<PagedResult<PracticeClosure>> { return { items: [], page: 1, pageSize: 25, totalCount: 0, totalPages: 0 }; }
   async createStudent(input: Record<string, unknown>) {
     await wait();
     const created = {
@@ -606,6 +624,10 @@ class MockDataSource implements DataSource {
       access,
     };
   }
+  async listStudentDisciplines(_id: string): Promise<StudentDiscipline[]> { return []; }
+  async downloadStudentDisciplineDocument(_studentId: string, _disciplineId: string): Promise<Blob> { throw new Error('Documento no disponible.'); }
+  async createStudentDiscipline(_id: string, _input: CreateStudentDiscipline): Promise<StudentDiscipline> { throw new Error('Utilice la API real para registrar amonestaciones.'); }
+  async revokeStudentDiscipline(_id: string, _disciplineId: string, _reason: string): Promise<StudentDiscipline> { throw new Error('Utilice la API real para retirar amonestaciones.'); }
   async provisionStudentAccess(
     studentId: string,
     _input: Record<string, unknown>,
@@ -896,6 +918,15 @@ class MockDataSource implements DataSource {
     const index = mockDeletedRecords.findIndex((record) => record.type === type && record.id === id);
     if (index < 0) throw new Error("El registro ya no está disponible para restauración.");
     mockDeletedRecords.splice(index, 1);
+  }
+  async previewPurgeDeletedRecord(): Promise<{ reference: string; documentCount: number; documentBytes: number; blockReason: string | null }> {
+    throw new Error("La eliminación permanente requiere el servidor principal.");
+  }
+  async purgeDeletedRecord(): Promise<{ documentCount: number; documentBytes: number; pendingStorageDeletes: number }> {
+    throw new Error("La eliminación permanente requiere el servidor principal.");
+  }
+  async retryPendingStorageDeletes(): Promise<{ pending: number }> {
+    throw new Error("La limpieza de archivos requiere el servidor principal.");
   }
 
   async listDocuments(
@@ -1486,13 +1517,9 @@ class ApiClient {
       return this.request<T>(path, init, false, true);
     }
     if (!response.ok) {
-      const problem = (await response.json().catch(() => null)) as {
-        detail?: string;
-        title?: string;
-      } | null;
-      const message = problem?.detail ?? problem?.title ?? "No se pudo completar la solicitud.";
+      const problem = (await response.json().catch(() => null)) as ApiProblem | null;
+      const message = apiProblemMessage(problem, response.status);
       const userMessage = humanizeOperationError(new Error(message));
-      if (userMessage !== message) console.error("API operation failed", { path, status: response.status, message });
       throw new Error(userMessage);
     }
     if (response.status === 204) return undefined as T;
@@ -1517,13 +1544,9 @@ class ApiClient {
     if (response.status === 401 && !retried && (await this.refreshSession()))
       return this.requestBlob(path, init, true);
     if (!response.ok) {
-      const problem = (await response.json().catch(() => null)) as {
-        detail?: string;
-        title?: string;
-      } | null;
-      const message = problem?.detail ?? problem?.title ?? "No se pudo completar la solicitud.";
+      const problem = (await response.json().catch(() => null)) as ApiProblem | null;
+      const message = apiProblemMessage(problem, response.status);
       const userMessage = humanizeOperationError(new Error(message));
-      if (userMessage !== message) console.error("API document request failed", { path, status: response.status, message });
       throw new Error(userMessage);
     }
     return response.blob();
@@ -1652,11 +1675,35 @@ class ApiDataSource implements DataSource {
   getStudent(id: string) {
     return this.api.request<StudentProfile>(`/students/${id}/profile`);
   }
+  getStudentLegalStudy(id: string) {
+    return this.api.request<StudentLegalStudy>(`/student-legal-studies/${id}`);
+  }
+  addStudentLegalReview(id: string, input: AddLegalStudyReview) {
+    return this.api.request<StudentLegalStudy>(`/student-legal-studies/${id}/reviews`, { method: 'POST', body: JSON.stringify(input) });
+  }
+  deliverStudentLegalStudy(id: string, input: DeliverLegalStudy) {
+    return this.api.request<StudentLegalStudy>(`/student-legal-studies/${id}/delivery`, { method: 'POST', body: JSON.stringify(input) });
+  }
+  listPracticeClosures(options: ListOptions = {}) {
+    return this.api.request<PagedResult<PracticeClosure>>(`/student-legal-studies/closures?${query(options)}`);
+  }
   registerStudent(input: Record<string, unknown>) {
     return this.api.request<StudentRegistration>("/students/registration", {
       method: "POST",
       body: JSON.stringify(input),
     });
+  }
+  listStudentDisciplines(id: string) {
+    return this.api.request<StudentDiscipline[]>(`/students/${id}/disciplines`);
+  }
+  downloadStudentDisciplineDocument(studentId: string, disciplineId: string) {
+    return this.api.requestBlob(`/students/${studentId}/disciplines/${disciplineId}/document`);
+  }
+  createStudentDiscipline(id: string, input: CreateStudentDiscipline) {
+    return this.api.request<StudentDiscipline>(`/students/${id}/disciplines`, { method: 'POST', body: JSON.stringify(input) });
+  }
+  revokeStudentDiscipline(id: string, disciplineId: string, reason: string) {
+    return this.api.request<StudentDiscipline>(`/students/${id}/disciplines/${disciplineId}/revoke`, { method: 'POST', body: JSON.stringify({ reason }) });
   }
   provisionStudentAccess(studentId: string, input: Record<string, unknown>) {
     return this.api.request<StudentAccess>(`/students/${studentId}/access`, {
@@ -1868,6 +1915,15 @@ class ApiDataSource implements DataSource {
   }
   restoreDeletedRecord(type: DeletedRecordType, id: string) {
     return this.api.request<void>(`/deleted-records/${type}/${id}/restore`, { method: "POST" });
+  }
+  previewPurgeDeletedRecord(type: DeletedRecordType, id: string) {
+    return this.api.request<{ reference: string; documentCount: number; documentBytes: number; blockReason: string | null }>(`/deleted-records/${type}/${id}/purge-preview`);
+  }
+  purgeDeletedRecord(type: DeletedRecordType, id: string, reference: string) {
+    return this.api.request<{ documentCount: number; documentBytes: number; pendingStorageDeletes: number }>(`/deleted-records/${type}/${id}/purge`, { method: "DELETE", body: JSON.stringify({ reference }) });
+  }
+  retryPendingStorageDeletes() {
+    return this.api.request<{ pending: number }>("/deleted-records/storage-cleanup", { method: "POST" });
   }
   listDocuments(
     options: ListOptions & { contextType?: string; contextId?: string } = {},

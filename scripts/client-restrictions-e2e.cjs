@@ -7,7 +7,7 @@ async function main() {
     if (!line.trim() || line.startsWith('#')) continue;
     const i = line.indexOf('='); config[line.slice(0, i)] = line.slice(i + 1);
   }
-  const api = 'http://127.0.0.1:5104/api/v1', web = 'http://127.0.0.1:5180';
+  const api = process.env.BUFETE_QA_API || 'http://127.0.0.1:5104/api/v1', web = process.env.BUFETE_QA_WEB || 'http://127.0.0.1:5180';
   const stamp = Date.now(), codes = [`qa-veto-${stamp}-a`, `qa-veto-${stamp}-b`];
   const password = require('node:crypto').randomBytes(12).toString('hex');
   const dpi = String(stamp), otherDpi = String(stamp + 1), concurrentDpi = String(stamp + 2), reason = `QA veto fixture ${stamp} - nunca una persona real`;
@@ -112,11 +112,18 @@ async function main() {
     const assigned = await req(`/cases/${uiCaseId}`, null, a.token, a.code, 'GET'); assert.ok(assigned.data.summary.assignments.some(x => x.studentId === student.id && x.status === 'Active')); assert.ok(assigned.data.timeline.some(x => x.title === 'Alumno asignado'));
     steps.push('Alumno habilitado mediante documentos reales en MinIO; apertura y asignación en navegador; refresh y timeline persistidos');
     await page.goto(web + `/personas/clientes/${clientA.data.id}`);
-    await page.getByRole('button', { name: 'Vetar atención', exact: true }).click();
+    await page.getByRole('button', { name: 'Agregar a lista negra', exact: true }).click();
     await page.getByLabel('Repita el DPI para confirmar').fill(dpi); await page.getByLabel('Motivo institucional').fill(reason); await page.getByRole('checkbox').check();
-    await page.getByRole('button', { name: 'Confirmar veto permanente' }).click();
-    await page.getByText(/Atención bloqueada por veto global/).waitFor(); await page.reload(); await page.getByText(/Atención bloqueada por veto global/).waitFor();
+    await page.getByRole('button', { name: 'Confirmar ingreso a lista negra' }).click();
+    await page.getByText(/Atención bloqueada: este DPI está en lista negra/).waitFor(); await page.reload(); await page.getByText(/Atención bloqueada: este DPI está en lista negra/).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Abrir proceso', exact: true }).isDisabled(), true);
+    assert.equal(await page.locator('.profile-summary .badge').innerText(), 'Lista negra');
+    assert.equal(await page.getByText('Atención vigente', { exact: true }).count(), 0);
+    const blockedList = await req('/clients?search=' + dpi, null, a.token, a.code, 'GET');
+    assert.equal(blockedList.data.items.find(item => item.id === clientA.data.id).restriction.isRestricted, true);
+    await page.goto(web + '/personas/clientes'); await page.getByPlaceholder('Buscar por nombre, DPI o recepción…').fill(dpi);
+    await page.getByText('Lista negra', { exact: true }).last().waitFor();
+    await page.screenshot({ path: path.join(out, 'lista-negra-listado.png') });
     const check = await req('/client-restrictions/check', { dpi: `${dpi.slice(0,4)} ${dpi.slice(4,9)} ${dpi.slice(9)}` }, b.token, b.code); assert.equal(check.status, 200); assert.equal(check.data.isRestricted, true); vetoIds.push(check.data.reference);
     assert.deepEqual(Object.keys(check.data).sort(), ['hasValidIdentity', 'isRestricted', 'reference']);
     const listA = await req('/client-restrictions', null, a.token, a.code, 'GET'), listB = await req('/client-restrictions', null, b.token, b.code, 'GET'); assert.equal(listA.data.items.length, 1); assert.equal(listB.data.items.length, 0);
@@ -124,8 +131,8 @@ async function main() {
     await page.goto(web + '/vetos'); await page.getByText(reason, { exact: true }).waitFor(); await page.reload(); await page.getByText(reason, { exact: true }).waitFor(); await page.screenshot({ path: path.join(out, 'vetos.png') });
     await page.goto(web + '/personas/clientes'); await page.getByRole('button', { name: 'Registrar usuario', exact: true }).click();
     await page.getByLabel('Nombre completo', { exact: true }).fill('Persona vetada QA'); await page.getByLabel('DPI', { exact: true }).fill(dpi); await page.getByRole('button', { name: 'Continuar', exact: true }).click();
-    await page.getByRole('alert').filter({ hasText: /veto global permanente/ }).waitFor(); assert.equal(await page.getByLabel('Nombre completo', { exact: true }).inputValue(), 'Persona vetada QA');
-    await page.goto(web + `/expedientes/${uiCaseId}`); await page.getByRole('alert').filter({ hasText: /Veto global permanente/ }).waitFor(); assert.equal(await page.getByRole('button', { name: 'Asignar alumno', exact: true }).count(), 0);
+    await page.getByRole('alert').filter({ hasText: /bloqueo permanente en lista negra/ }).waitFor(); assert.equal(await page.getByLabel('Nombre completo', { exact: true }).inputValue(), 'Persona vetada QA');
+    await page.goto(web + `/expedientes/${uiCaseId}`); await page.getByRole('alert').filter({ hasText: /Lista negra permanente/ }).waitFor(); assert.equal(await page.getByRole('button', { name: 'Asignar alumno', exact: true }).count(), 0);
     steps.push('Navegador: búsqueda por DPI, checklist sin desbordamiento a 1366/900/360, veto por administrador de sede, ficha/listado persisten tras refresh');
     assert.equal((await req('/client-restrictions', { dpi, confirmDpi: dpi, reason }, a.token, a.code)).status, 409);
     assert.equal((await req('/clients', body(dpi, 'Otro nombre QA'), b.token, b.code)).status, 409);
@@ -149,6 +156,13 @@ async function main() {
     const concurrent = await Promise.all(contexts.map(context => req('/client-restrictions', { dpi: concurrentDpi, confirmDpi: concurrentDpi, reason }, context.token, context.code)));
     assert.deepEqual(concurrent.map(x => x.status).sort(), [201, 409]);
     assert.equal((await req('/clients', body(concurrentDpi), b.token, b.code)).status, 409);
+    assert.equal((await req(`/client-restrictions/${vetoIds[0]}`, { reason: 'Motivo de prueba de rehabilitación' }, b.token, b.code, 'DELETE')).status, 403);
+    assert.equal((await req(`/client-restrictions/${vetoIds[0]}`, { reason: 'Motivo de prueba de rehabilitación' }, a.token, a.code, 'DELETE')).status, 204);
+    assert.equal((await req('/client-restrictions/check', { dpi }, b.token, b.code)).data.isRestricted, false);
+    assert.equal((await req(`/clients/${clientA.data.id}/profile`, null, a.token, a.code, 'GET')).data.restriction.isRestricted, false);
+    assert.equal(sql(`SELECT count(*) FROM bufete.audit_logs WHERE "Action"='ClientRestrictionRemoved' AND "EntityId"='${vetoIds[0]}'`), '1');
+    assert.equal((await req(`/client-restrictions/${vetoIds[0]}`, { reason: 'Segundo intento de retiro' }, a.token, a.code, 'DELETE')).status, 404);
+    steps.push('Rehabilitación por sede emisora: 403 de otra sede, 204 y 404 idempotente, auditoría central, atención disponible en ambas sedes tras refresh');
     steps.push('API directa: veto transversal, cambio de DPI denegado, mismo nombre distinto DPI permitido, casos/escaneo bloqueados, cierre/historial permitidos, aislamiento y auditoría PostgreSQL');
     assert.deepEqual(errors, []);
     assert.deepEqual(networkErrors, []);
@@ -159,7 +173,7 @@ async function main() {
   } finally {
     if (browser) await browser.close();
     // Fixture-only cleanup with validated tenant codes/databases. Permanent production vetoes are never removed.
-    const ids = sql(`SELECT "Id" FROM bufete.client_restrictions WHERE "Dpi" IN ('${dpi}','${concurrentDpi}') AND "SourceTenantCode" IN ('${codes[0]}','${codes[1]}')`).split(/\r?\n/).filter(Boolean);
+    const ids = [...new Set([...vetoIds, ...sql(`SELECT "Id" FROM bufete.client_restrictions WHERE "Dpi" IN ('${dpi}','${concurrentDpi}') AND "SourceTenantCode" IN ('${codes[0]}','${codes[1]}')`).split(/\r?\n/).filter(Boolean)])];
     for (const id of ids) { assert.match(id, /^[a-f0-9-]{36}$/); sql(`DELETE FROM bufete.audit_logs WHERE "EntityType"='ClientRestriction' AND "EntityId"='${id}'; DELETE FROM bufete.client_restrictions WHERE "Id"='${id}' AND "Dpi" IN ('${dpi}','${concurrentDpi}');`); }
     for (const code of created) {
       assert.match(code, /^qa-veto-\d+-[ab]$/);

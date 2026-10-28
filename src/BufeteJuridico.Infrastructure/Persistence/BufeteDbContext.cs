@@ -50,6 +50,11 @@ public sealed class BufeteDbContext(
 
     public DbSet<Student> Students => Set<Student>();
 
+    public DbSet<StudentLegalReview> StudentLegalReviews => Set<StudentLegalReview>();
+
+    public DbSet<StudentPracticeClosure> StudentPracticeClosures => Set<StudentPracticeClosure>();
+    public DbSet<StudentDiscipline> StudentDisciplines => Set<StudentDiscipline>();
+
     public DbSet<EnrollmentApplication> EnrollmentApplications => Set<EnrollmentApplication>();
 
     public DbSet<StudentRequirement> StudentRequirements => Set<StudentRequirement>();

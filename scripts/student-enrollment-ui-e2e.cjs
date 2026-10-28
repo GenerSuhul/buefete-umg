@@ -6,8 +6,8 @@ const assert = require('node:assert/strict');
 async function main() {
   const { chromium } = require(path.join(process.argv[2], 'playwright'));
   const { PDFDocument } = require('../frontend/node_modules/pdf-lib');
-  const base = 'http://127.0.0.1:5180';
-  const api = 'http://127.0.0.1:5104/api/v1';
+  const base = process.env.STUDENT_QA_WEB || 'http://127.0.0.1:5180';
+  const api = (process.env.STUDENT_QA_API || 'http://127.0.0.1:5104') + '/api/v1';
   const configuration = {};
   for (const file of ['.env', '.env.platform.local']) for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
     if (!line.trim() || line.trimStart().startsWith('#')) continue;
@@ -64,25 +64,10 @@ async function main() {
     await dialog.getByLabel('Dirección de residencia').fill('Dirección QA');
     await dialog.getByLabel('Teléfono móvil').fill('56857965');
     await dialog.getByRole('button', { name: 'Continuar', exact: true }).click();
-    assert.match(await dialog.getByRole('combobox', { name: /Registro inicial/ }).innerText(), /Presentada/);
+    assert.equal(await dialog.getByText('Registro inicial', { exact: true }).count(), 0);
     assert.equal(await dialog.getByLabel('Lugar asignado').count(), 0);
     await dialog.getByText('Sede QA inscripción', { exact: true }).waitFor();
-    await dialog.getByRole('button', { name: 'Seleccionar hora de inicio' }).click();
-    let time = page.getByRole('dialog', { name: 'Seleccionar Hora de inicio' });
-    await time.locator('.time-picker-options').first().evaluate(element => { element.scrollTop = 300; });
-    await page.waitForTimeout(100);
-    assert.equal(await time.count(), 1);
-    await time.getByRole('button', { name: '08', exact: true }).click();
-    await time.getByRole('button', { name: '30', exact: true }).click();
-    await dialog.getByRole('textbox', { name: 'Hora de finalización' }).fill('12:00');
-    await dialog.getByRole('button', { name: 'Período de práctica', exact: true }).click();
-    const range = page.getByRole('dialog', { name: 'Seleccionar Período de práctica' });
-    await chooseMonth(range, 2026, 'octubre');
-    await range.getByRole('button', { name: /15 de octubre de 2026/ }).click();
-    await chooseMonth(range, 2027, 'abril');
-    await range.getByRole('button', { name: /20 de abril de 2027/ }).click();
-    await range.getByRole('button', { name: 'Aplicar rango' }).click();
-    steps.push('Hora: scroll mantiene foco; rango: salto directo mes/año conserva inicio');
+    steps.push('Modalidad civil: lugar de práctica no aplica; fecha de inscripción se conserva');
     await page.screenshot({ path: path.join(artifacts, 'practica.png'), fullPage: true });
     await dialog.getByRole('button', { name: 'Continuar', exact: true }).click();
     assert.equal(await dialog.getByRole('button', { name: /^Escanear / }).count(), 9);
@@ -95,8 +80,10 @@ async function main() {
     } else await dialog.getByRole('alert').filter({ hasText: /escáner local/ }).waitFor();
     await dialog.getByRole('button', { name: 'Cancelar escaneo' }).click();
     const pdf = await PDFDocument.create(); pdf.addPage([300, 400]); const bytes = Buffer.from(await pdf.save());
-    await dialog.locator('input[type=file]').first().setInputFiles({ name: 'solicitud-qa.pdf', mimeType: 'application/pdf', buffer: bytes });
+    assert.equal(await dialog.locator('input[type=file]').count(), 9);
+    for (let index = 0; index < 8; index++) await dialog.locator('input[type=file]').nth(index).setInputFiles({ name: `documento-${index + 1}-qa.pdf`, mimeType: 'application/pdf', buffer: bytes });
     await dialog.getByRole('button', { name: 'Continuar', exact: true }).click();
+    await dialog.getByLabel('Dar acceso al sistema').check();
     await dialog.getByLabel('Contraseña temporal', { exact: true }).fill(password);
     await dialog.getByLabel('Confirmar contraseña', { exact: true }).fill(password);
     await dialog.getByRole('button', { name: /Confirmar inscripción|Inscribir alumno|Crear alumno/ }).click();
@@ -104,10 +91,9 @@ async function main() {
     const id = new URL(page.url()).pathname.split('/').pop();
     const session = await page.evaluate(() => JSON.parse(sessionStorage.getItem('bufete_umg_session')));
     let profile = (await request(`/students/${id}/profile`, session.accessToken, null, 'GET')).result;
-    assert.equal(profile.enrollments[0].status, 'Submitted');
+    assert.equal(profile.enrollments[0].status, 'Draft');
     assert.equal(profile.enrollments[0].siteName, 'Sede QA inscripción');
-    assert.equal(profile.enrollments[0].startDate, '2026-10-15');
-    assert.equal(profile.enrollments[0].endDate, '2027-04-20');
+    assert.equal(profile.enrollments[0].siteAddress, null);
     assert.ok(profile.student.photoDocumentId);
     await page.waitForFunction(() => Array.from(document.images).some(image => image.src.startsWith('blob:') && image.naturalWidth > 0));
     const requirement = profile.enrollments[0].requirements.find(item => item.documentId);
@@ -116,17 +102,16 @@ async function main() {
     assert.equal(blockedApproval.status, 409);
     const download = await fetch(`${api}/documents/${requirement.documentId}/content`, { headers: { Authorization: `Bearer ${session.accessToken}`, 'X-Sede-Code': code } });
     assert.equal(download.status, 200); assert.deepEqual(Buffer.from(await download.arrayBuffer()), bytes);
-    steps.push('Alta real: alumno/cuenta/práctica + foto MinIO + PDF asociado y descargado idéntico');
+    steps.push('Alta real en borrador: alumno/cuenta/práctica + foto MinIO + documentos obligatorios y descarga idéntica');
     await page.reload();
     await page.getByRole('button', { name: 'Editar perfil', exact: true }).click();
     dialog = page.getByRole('dialog', { name: 'Editar datos del alumno' });
     await dialog.getByLabel('Días de práctica', { exact: true }).fill('Lunes y miércoles');
-    await dialog.getByLabel('Dirección del lugar de práctica').fill('Oficina QA actualizada');
     await dialog.getByRole('button', { name: 'Guardar perfil', exact: true }).click();
     await dialog.waitFor({ state: 'hidden' }); await page.reload();
     profile = (await request(`/students/${id}/profile`, session.accessToken, null, 'GET')).result;
     assert.equal(profile.enrollments[0].practiceDays, 'Lunes y miércoles');
-    assert.equal(profile.enrollments[0].siteAddress, 'Oficina QA actualizada');
+    assert.equal(profile.enrollments[0].siteAddress, null);
     await page.getByRole('button', { name: 'Editar perfil', exact: true }).click();
     dialog = page.getByRole('dialog', { name: 'Editar datos del alumno' });
     assert.equal(await dialog.getByLabel('Días de práctica').inputValue(), 'Lunes y miércoles');
@@ -147,8 +132,8 @@ async function main() {
     response = await request(`/students/${id}/profile`, session.accessToken, null, 'GET', 'peten');
     assert.equal(response.status, 401);
     steps.push('Edición/refresco/reapertura; sede impuesta; rango inválido no guarda parcialmente; conflicto de concurrencia');
-    const central = configuration.POSTGRES_DB || (configuration.ConnectionStrings__BufeteDb || '').match(/Database=([^;]+)/i)?.[1];
-    assert.match(central, /^[a-zA-Z0-9_]+$/);
+    const central = process.env.QA_DATABASE_NAME;
+    assert.match(central ?? '', /^bufete_changes_qa_[a-f0-9]{12}$/);
     const dbArgs = ['exec', 'bufete-juridico-umg-postgres-1', 'psql', '-U', configuration.POSTGRES_USER, '-At', '-d'];
     const database = execFileSync('docker', [...dbArgs, central, '-c', `SELECT "DatabaseName" FROM bufete.tenants WHERE "Code"='${code}';`], { encoding: 'utf8' }).trim();
     assert.match(database, /^bufete_t_[a-f0-9]{32}$/);
@@ -190,9 +175,8 @@ async function main() {
     throw error;
   } finally {
     await browser.close();
-    if (tenantCreated && /^qa-student-\d+$/.test(code)) {
-      const central = configuration.POSTGRES_DB || (configuration.ConnectionStrings__BufeteDb || '').match(/Database=([^;]+)/i)?.[1];
-      if (!central || !/^[a-zA-Z0-9_]+$/.test(central)) throw new Error('Base central QA no resuelta.');
+    if (tenantCreated && /^qa-student-\d+$/.test(code) && /^bufete_changes_qa_[a-f0-9]{12}$/.test(process.env.QA_DATABASE_NAME ?? '')) {
+      const central = process.env.QA_DATABASE_NAME;
       const args = ['exec', 'bufete-juridico-umg-postgres-1', 'psql', '-U', configuration.POSTGRES_USER, '-d', central, '-At', '-c'];
       const database = execFileSync('docker', [...args, `SELECT "DatabaseName" FROM bufete.tenants WHERE "Code" = '${code}';`], { encoding: 'utf8' }).trim();
       if (!/^bufete_t_[a-f0-9]{32}$/.test(database)) throw new Error('Base QA no validada.');

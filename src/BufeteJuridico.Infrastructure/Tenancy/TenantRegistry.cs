@@ -6,6 +6,7 @@ using BufeteJuridico.Application.Identity;
 using BufeteJuridico.Domain.Identity;
 using BufeteJuridico.Infrastructure.Identity;
 using BufeteJuridico.Infrastructure.Persistence;
+using BufeteJuridico.Domain.Students;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -24,6 +25,24 @@ public sealed class TenantRegistry(
     TimeProvider clock) : ITenantManagementService
 {
     public BufeteDbContext OpenCentral() => Open(configuration.GetConnectionString("BufeteDb")!);
+
+    public BufeteDbContext OpenTenant(Tenant tenant)
+    {
+        var connection = new NpgsqlConnectionStringBuilder(configuration.GetConnectionString("BufeteDb"))
+        { Database = tenant.DatabaseName }.ConnectionString;
+        return Open(connection);
+    }
+
+    public async Task<bool> IsStudentSuspendedAsync(string dpi, CancellationToken ct)
+    {
+        var key = ContactNormalization.Digits(dpi);
+        var today = StudentDisciplineCalendar.Today(clock.GetUtcNow());
+        await using var central = OpenCentral();
+        return await central.StudentDisciplines.AsNoTracking().AnyAsync(x => x.Dpi == key &&
+            x.RevokedAtUtc == null &&
+            (x.Kind == StudentDisciplineKind.PermanentSuspension ||
+             (x.Kind == StudentDisciplineKind.SixMonthSuspension && x.StartsOn <= today && x.EndsOn >= today)), ct);
+    }
 
     private BufeteDbContext Open(string connection) => new(
         new DbContextOptionsBuilder<BufeteDbContext>().UseNpgsql(connection).Options,
@@ -64,6 +83,13 @@ public sealed class TenantRegistry(
         await using var db = OpenCentral();
         return await db.Tenants.AsNoTracking().SingleOrDefaultAsync(item => item.Code == code && item.IsActive && item.Status == "Ready", ct)
             ?? throw new ForbiddenException("La sede no está disponible. Consulte con la administración.");
+    }
+
+    public async Task<Tenant> ResolveForHistoricalReadAsync(string code, CancellationToken ct)
+    {
+        await using var db = OpenCentral();
+        return await db.Tenants.AsNoTracking().SingleOrDefaultAsync(item => item.Code == code, ct)
+            ?? throw new NotFoundException("No se encontró la sede de origen del documento.");
     }
 
     public async Task<bool> IsPlatformAccountValidAsync(Guid id, Guid stamp, CancellationToken ct)

@@ -245,7 +245,7 @@ export async function scanOperation(
       );
       ensure(
         scan.pages.length < 40,
-        "La demo permite hasta 40 archivos por sesión.",
+        "Se permiten hasta 40 archivos por sesión.",
       );
       const stored = await saveFile(tenantId, file),
         pageId = id();

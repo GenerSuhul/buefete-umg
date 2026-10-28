@@ -32,7 +32,8 @@ public sealed record ClientDto(
     Guid? SignatureDocumentId,
     bool IsActive,
     DateTimeOffset CreatedAtUtc,
-    Guid ConcurrencyToken);
+    Guid ConcurrencyToken,
+    ClientRestrictionStatus? Restriction = null);
 
 public sealed record SaveClientRequest(
     string FullName,

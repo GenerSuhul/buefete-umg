@@ -19,7 +19,8 @@ internal sealed class StudentService(
     IDocumentService documentService,
     ICurrentUser currentUser,
     TimeProvider timeProvider,
-    TenantContext tenantContext)
+    TenantContext tenantContext,
+    IStudentDisciplineService discipline)
     : IStudentService
 {
     public async Task<PagedResult<StudentDto>> GetStudentsAsync(
@@ -169,6 +170,7 @@ internal sealed class StudentService(
     public async Task<StudentDto> CreateStudentAsync(SaveStudentRequest request, CancellationToken cancellationToken)
     {
         ValidateStudent(request);
+        await discipline.EnsureNotBlockedAsync(request.Dpi, cancellationToken);
         await EnsureUniqueStudentDataAsync(null, request, cancellationToken);
 
         var student = new Student();
@@ -188,7 +190,7 @@ internal sealed class StudentService(
             await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
             var student = await CreateStudentAsync(request.Student, cancellationToken);
             var enrollment = await CreateEnrollmentAsync(student.Id, request.Enrollment, cancellationToken);
-            var access = await ProvisionAccessAsync(student.Id, request.Access, cancellationToken);
+            var access = request.Access is null ? null : await ProvisionAccessAsync(student.Id, request.Access, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             var persistedStudent = await GetStudentAsync(student.Id, cancellationToken);
             return new StudentRegistrationDto(
@@ -205,8 +207,13 @@ internal sealed class StudentService(
     {
         var student = await dbContext.Students.SingleOrDefaultAsync(item => item.Id == studentId && item.IsActive, cancellationToken)
             ?? throw new NotFoundException("No se encontró el alumno.");
+        if (await dbContext.StudentPracticeClosures.AnyAsync(item => item.StudentId == studentId, cancellationToken))
+            throw new ConflictException("La práctica del alumno ya está cerrada.");
+        await discipline.EnsureNotBlockedAsync(student.Dpi, cancellationToken);
         if (student.UserAccountId is not null)
             throw new ConflictException("El alumno ya tiene acceso al sistema.");
+        if (string.IsNullOrWhiteSpace(student.Email))
+            throw new ValidationException("Registre un correo electrónico antes de crear acceso al sistema.");
 
         var studentRole = await dbContext.Roles.AsNoTracking().SingleOrDefaultAsync(
             item => item.NormalizedName == TextNormalization.Normalize("Alumno") && item.IsActive,
@@ -235,6 +242,10 @@ internal sealed class StudentService(
             throw new ValidationException("La versión del alumno es obligatoria para guardar cambios.");
         if (student.ConcurrencyToken != concurrencyToken)
             throw new ConflictException("El alumno cambió. Actualice la pantalla antes de guardar.");
+        if (student.Dpi != ContactNormalization.Digits(request.Dpi))
+            await discipline.EnsureNotBlockedAsync(request.Dpi, cancellationToken);
+        if (student.UserAccountId is not null && string.IsNullOrWhiteSpace(request.Email))
+            throw new ValidationException("El correo es obligatorio mientras el alumno tenga acceso al sistema.");
         dbContext.Entry(student).Property(item => item.ConcurrencyToken).OriginalValue = concurrencyToken;
 
         if (request.Practice is { } practice)
@@ -250,7 +261,7 @@ internal sealed class StudentService(
             dbContext.Entry(enrollment).Property(item => item.ConcurrencyToken).OriginalValue = practice.ConcurrencyToken;
             enrollment.Modality = practice.Modality;
             enrollment.SiteName = practice.Modality == PracticeModality.ExternalInternship ? Clean(practice.SiteName) : tenantContext.Name;
-            enrollment.SiteAddress = Clean(practice.SiteAddress);
+            enrollment.SiteAddress = practice.Modality == PracticeModality.CivilFamilyCases ? null : Clean(practice.SiteAddress);
             enrollment.Shift = Clean(practice.Shift);
             enrollment.PracticeDays = Clean(practice.PracticeDays);
             enrollment.StartTime = practice.StartTime;
@@ -264,12 +275,12 @@ internal sealed class StudentService(
         if (student.UserAccountId is Guid userAccountId)
         {
             var user = await dbContext.Users.SingleAsync(item => item.Id == userAccountId, cancellationToken);
-            var normalizedEmail = TextNormalization.Normalize(request.Email);
+            var normalizedEmail = TextNormalization.Normalize(request.Email!);
             if (await dbContext.Users.AnyAsync(item => item.Id != userAccountId && item.NormalizedEmail == normalizedEmail, cancellationToken))
                 throw new ConflictException("El correo ya pertenece a otra cuenta de acceso.");
-            user.Email = request.Email.Trim();
+            user.Email = request.Email!.Trim();
             user.NormalizedEmail = normalizedEmail;
-            user.Username = request.Email.Trim();
+            user.Username = request.Email!.Trim();
             user.NormalizedUsername = normalizedEmail;
             user.FullName = request.FullName.Trim();
         }
@@ -281,6 +292,9 @@ internal sealed class StudentService(
     {
         var student = await dbContext.Students.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
             ?? throw new NotFoundException("No se encontró el alumno.");
+        if (isActive && await dbContext.StudentPracticeClosures.AnyAsync(item => item.StudentId == id, cancellationToken))
+            throw new ConflictException("La práctica del alumno ya está cerrada; no se puede reactivar.");
+        if (isActive) await discipline.EnsureNotBlockedAsync(student.Dpi, cancellationToken);
 
         if (!isActive && await dbContext.CaseAssignments.AnyAsync(item =>
                 item.StudentId == id && item.Status == CaseAssignmentStatus.Active,
@@ -305,6 +319,9 @@ internal sealed class StudentService(
     {
         var student = await dbContext.Students.SingleOrDefaultAsync(item => item.Id == studentId && item.IsActive, cancellationToken)
             ?? throw new NotFoundException("No se encontró el alumno.");
+        if (await dbContext.StudentPracticeClosures.AnyAsync(item => item.StudentId == studentId, cancellationToken))
+            throw new ConflictException("La práctica del alumno ya está cerrada.");
+        await discipline.EnsureNotBlockedAsync(student.Dpi, cancellationToken);
 
         ValidatePractice(request.Modality, request.StartTime, request.EndTime, request.StartDate, request.EndDate);
 
@@ -324,8 +341,8 @@ internal sealed class StudentService(
             .OrderBy(item => item.SortOrder)
             .ToListAsync(cancellationToken);
 
-        if (request.InitialStatus is not EnrollmentStatus.Draft and not EnrollmentStatus.Submitted)
-            throw new ValidationException("Al crear la inscripción el estado inicial debe ser Borrador o Presentada.");
+        if (request.InitialStatus != EnrollmentStatus.Draft)
+            throw new ValidationException("Registre primero al alumno en borrador y complete los documentos antes de presentar la inscripción.");
 
         var now = timeProvider.GetUtcNow();
 
@@ -335,7 +352,7 @@ internal sealed class StudentService(
             Modality = request.Modality,
             Status = request.InitialStatus,
             SiteName = request.Modality == PracticeModality.ExternalInternship ? Clean(request.SiteName) : tenantContext.Name,
-            SiteAddress = Clean(request.SiteAddress),
+            SiteAddress = request.Modality == PracticeModality.CivilFamilyCases ? null : Clean(request.SiteAddress),
             Shift = Clean(request.Shift),
             PracticeDays = Clean(request.PracticeDays),
             StartTime = request.StartTime,
@@ -366,9 +383,32 @@ internal sealed class StudentService(
         CancellationToken cancellationToken)
     {
         var enrollment = await LoadEnrollmentAsync(enrollmentId, cancellationToken);
+        if (request.Status is EnrollmentStatus.Submitted or EnrollmentStatus.Admitted or EnrollmentStatus.Approved)
+        {
+            var student = await dbContext.Students.AsNoTracking().SingleAsync(x => x.Id == enrollment.StudentId, cancellationToken);
+            await discipline.EnsureNotBlockedAsync(student.Dpi, cancellationToken);
+            if (await dbContext.StudentPracticeClosures.AnyAsync(x => x.StudentId == student.Id, cancellationToken))
+                throw new ConflictException("La práctica del alumno ya fue cerrada.");
+        }
         if (!EnrollmentRules.CanTransition(enrollment.Status, request.Status))
         {
             throw new ConflictException($"No se permite cambiar la inscripción de {enrollment.Status} a {request.Status}.");
+        }
+
+        if (request.Status == EnrollmentStatus.Submitted)
+        {
+            var missingDocuments = await dbContext.StudentRequirements
+                .Join(dbContext.RequirementDefinitions,
+                    requirement => requirement.RequirementDefinitionId,
+                    definition => definition.Id,
+                    (requirement, definition) => new { requirement, definition })
+                .AnyAsync(item => item.requirement.EnrollmentApplicationId == enrollmentId &&
+                    item.definition.IsRequired && item.definition.Kind == RequirementKind.Document &&
+                    (item.requirement.DocumentId == null ||
+                     item.requirement.Status != RequirementFulfillmentStatus.Submitted &&
+                     item.requirement.Status != RequirementFulfillmentStatus.Accepted), cancellationToken);
+            if (missingDocuments)
+                throw new ConflictException("Complete todos los documentos obligatorios antes de presentar la inscripción.");
         }
 
         if (request.Status == EnrollmentStatus.Approved)
@@ -512,7 +552,7 @@ internal sealed class StudentService(
                 item.Id != id && item.Dpi.Replace(" ", "").Replace("-", "") == dpiDigits,
                 cancellationToken))
             throw new ConflictException("El DPI del alumno ya está registrado.");
-        if (await dbContext.Students.AnyAsync(item => item.Id != id && item.Email == request.Email.Trim(), cancellationToken))
+        if (!string.IsNullOrWhiteSpace(request.Email) && await dbContext.Students.AnyAsync(item => item.Id != id && item.Email == request.Email.Trim(), cancellationToken))
             throw new ConflictException("El correo del alumno ya está registrado.");
     }
 
@@ -526,10 +566,9 @@ internal sealed class StudentService(
         if (string.IsNullOrWhiteSpace(request.Dpi)) errors["dpi"] = ["El DPI es obligatorio."];
         else if (!ContactNormalization.IsValidCui(request.Dpi)) errors["dpi"] = ["El DPI debe contener los 13 dígitos del CUI."];
         if (string.IsNullOrWhiteSpace(request.ResidenceAddress)) errors["residenceAddress"] = ["La residencia es obligatoria."];
-        if (string.IsNullOrWhiteSpace(request.Email) || !request.Email.Contains('@', StringComparison.Ordinal)) errors["email"] = ["El correo no es válido."];
-        if (request.Semester <= 0) errors["semester"] = ["El semestre debe ser mayor que cero."];
+        if (!string.IsNullOrWhiteSpace(request.Email) && !request.Email.Contains('@', StringComparison.Ordinal)) errors["email"] = ["El correo no es válido."];
         if (string.IsNullOrWhiteSpace(request.StudyShift)) errors["studyShift"] = ["La jornada de estudio es obligatoria."];
-        else if (request.StudyShift is not ("Matutina" or "Vespertina" or "Nocturna")) errors["studyShift"] = ["Seleccione una jornada válida."];
+        else if (request.StudyShift is not ("Entre semana" or "Sábado" or "Domingo")) errors["studyShift"] = ["Seleccione una jornada válida."];
         if (!ContactNormalization.IsValidGuatemalaPhone(request.WorkPhone)) errors["workPhone"] = ["El teléfono de trabajo debe contener 8 dígitos o el prefijo +502."];
         if (!ContactNormalization.IsValidGuatemalaPhone(request.MobilePhone)) errors["mobilePhone"] = ["El celular debe contener 8 dígitos o el prefijo +502."];
         if (!ContactNormalization.IsValidGuatemalaPhone(request.HomePhone)) errors["homePhone"] = ["El teléfono residencial debe contener 8 dígitos o el prefijo +502."];
@@ -555,7 +594,7 @@ internal sealed class StudentService(
         student.ResidenceAddress = request.ResidenceAddress.Trim();
         student.MobilePhone = ContactNormalization.GuatemalaPhone(request.MobilePhone);
         student.HomePhone = ContactNormalization.GuatemalaPhone(request.HomePhone);
-        student.Email = request.Email.Trim();
+        student.Email = request.Email?.Trim() ?? string.Empty;
         student.RegistrationDate = request.RegistrationDate;
     }
 

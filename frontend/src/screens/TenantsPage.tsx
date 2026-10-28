@@ -197,7 +197,7 @@ function DemoTenantsPage() {
                     personal sólo pueden acceder a su espacio asignado.
                   </p>
                   <p>
-                    En esta demo, el administrador de plataforma puede crear
+                    El administrador de plataforma puede crear
                     sedes y cambiar de espacio. No se copian expedientes entre
                     sedes.
                   </p>

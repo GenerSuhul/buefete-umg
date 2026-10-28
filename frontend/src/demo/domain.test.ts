@@ -67,27 +67,21 @@ describe("Dominio aislado de demo", () => {
         registrationDate: "2026-10-09",
         residenceAddress: "Prueba",
       },
-      enrollment: { modality: "CivilFamilyCases", initialStatus: "Submitted" },
+      enrollment: { modality: "CivilFamilyCases", initialStatus: "Draft" },
       access: { password: "Ejemplo26" },
     }) as StudentRegistration;
     expect(() =>
       run("assignStudent", legal.summary.id, r.student.id, true),
     ).toThrow(/aprobada/);
-    expect(() =>
-      run("changeEnrollmentStatus", r.enrollment.id, { status: "Approved" }),
-    ).toThrow(/siguiente estado/);
-    run("changeEnrollmentStatus", r.enrollment.id, { status: "Admitted" });
-    run("changeEnrollmentStatus", r.enrollment.id, { status: "UnderReview" });
-    expect(() =>
-      run("changeEnrollmentStatus", r.enrollment.id, { status: "Approved" }),
-    ).toThrow(/requisitos/);
+    expect(() => run("changeEnrollmentStatus", r.enrollment.id, { status: "Submitted" }))
+      .toThrow(/documentos obligatorios/);
     expect(r.enrollment.requirements).toHaveLength(9);
   });
   it('edita la práctica vinculada sin permitir cambios parciales inválidos', () => {
     const { run } = setup();
     const r = run('registerStudent', {
       student: { fullName: 'Alumno práctica', email: 'practica@example.test', studentCardNumber: '1690-26-00300', dpi: '0000000000000', registrationDate: '2026-10-09', residenceAddress: 'Prueba' },
-      enrollment: { modality: 'CivilFamilyCases', initialStatus: 'Submitted', siteName: 'Petén' }, access: { password: 'Ejemplo26' },
+      enrollment: { modality: 'CivilFamilyCases', initialStatus: 'Draft', siteName: 'Petén' }, access: { password: 'Ejemplo26' },
     }) as StudentRegistration;
     const practice = { ...r.enrollment, enrollmentId: r.enrollment.id, practiceDays: 'Lunes', siteName: 'Otra sede' };
     run('updateStudent', r.student.id, { concurrencyToken: r.student.concurrencyToken, practice });

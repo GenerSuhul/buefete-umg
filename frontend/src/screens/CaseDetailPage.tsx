@@ -560,11 +560,11 @@ export function CaseDetailPage() {
   ).length;
   const readiness = assessCaseReadiness(data);
   const deleteCase = async () => {
-    const approved = await confirm({ title: "Eliminar expediente", message: `${legalCase.caseNumber} dejará de aparecer para secretaría y alumnos. El historial y los documentos se conservarán.`, confirmLabel: "Enviar a Eliminados", tone: "danger" });
+    const approved = await confirm({ title: "Dar de baja el expediente", message: `${legalCase.caseNumber} dejará de aparecer para secretaría y alumnos. El historial y los documentos se conservarán en Eliminados.`, confirmLabel: "Dar de baja", tone: "danger" });
     if (!approved) return;
     setBusy(true);
     try {
-      await dataSource.deleteCase(id, "Eliminado desde el expediente");
+      await dataSource.deleteCase(id, "Baja solicitada desde el expediente");
       navigate("/expedientes", { replace: true });
     } finally { setBusy(false); }
   };
@@ -581,7 +581,8 @@ export function CaseDetailPage() {
         description={`${legalCase.processTypeName} · Abierto ${formatDate(legalCase.openedAtUtc)}`}
         actions={
           <>
-            {canDelete ? <Button variant="danger" disabled={busy} onClick={deleteCase}><Trash2 size={17} />Eliminar</Button> : null}
+            {canDelete ? <Button variant="danger" disabled={busy} onClick={deleteCase}><Trash2 size={17} />Dar de baja</Button> : null}
+            {canEditCase && legalCase.status !== "Archived" && !(attentionBlocked && legalCase.status === "Closed") ? <Button variant="secondary" onClick={() => { setCloseForm({ closedAtUtc: localNow(), reason: "" }); openAction("close"); }}>{legalCase.status === "Closed" ? "Marcar activo" : "Finalizar proceso"}</Button> : null}
             {canModifyOpenCase ? <Button variant="secondary" onClick={() => { setEditForm({ status: legalCase.status, stage: legalCase.stage }); openAction("edit"); }}><Pencil size={17} />Estado y etapa</Button> : null}
             {canAssignOpenCase ? <Button variant="secondary" onClick={() => openAction("assign")}>
               <UserPlus size={17} />
@@ -602,7 +603,7 @@ export function CaseDetailPage() {
         }
       />
       <div className="case-overview-strip">
-        {attentionBlocked && <p role="alert" className="confirmation-warning">{data.restriction?.isRestricted ? `Veto global permanente. Referencia: ${data.restriction.reference}.` : 'El DPI histórico necesita corrección en la ficha del usuario.'} No se puede continuar la atención ni asignar alumnos. Puede consultar el historial o cerrar el caso. <Link to={`/personas/clientes/${legalCase.clientId}`}>Ver ficha del usuario</Link></p>}
+        {attentionBlocked && <p role="alert" className="confirmation-warning">{data.restriction?.isRestricted ? `Lista negra permanente. Referencia: ${data.restriction.reference}.` : 'El DPI histórico necesita corrección en la ficha del usuario.'} No se puede continuar la atención ni asignar alumnos. Puede consultar el historial o cerrar el caso. <Link to={`/personas/clientes/${legalCase.clientId}`}>Ver ficha del usuario</Link></p>}
         <div>
           <small>Estado actual</small>
           <strong>{translate(legalCase.status)}</strong>
@@ -627,16 +628,6 @@ export function CaseDetailPage() {
         <Badge tone={statusTone(legalCase.status)}>
           {translate(legalCase.status)}
         </Badge>
-        {canEditCase && legalCase.status !== "Archived" && !(attentionBlocked && legalCase.status === 'Closed') ? <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setCloseForm({ closedAtUtc: localNow(), reason: "" });
-            openAction("close");
-          }}
-        >
-          {legalCase.status === "Closed" ? "Reabrir" : "Cerrar caso"}
-        </Button> : null}
       </div>
       <DetailTabs
         tabs={[
@@ -647,14 +638,14 @@ export function CaseDetailPage() {
             count: data.requirements.length,
           },
           {
-            id: "timeline",
-            label: "Línea de tiempo",
-            count: data.timeline.length,
-          },
-          {
             id: "memorials",
             label: "Memoriales",
             count: data.memorials.length,
+          },
+          {
+            id: "timeline",
+            label: "Línea de tiempo",
+            count: data.timeline.length,
           },
           {
             id: "people",
@@ -1817,8 +1808,8 @@ export function CaseDetailPage() {
         onClose={() => !busy && setAction(null)}
         title={
           legalCase.status === "Closed"
-            ? "Reabrir expediente"
-            : "Cerrar expediente"
+            ? "Marcar expediente activo"
+            : "Finalizar proceso"
         }
         description="El historial del expediente se conservará."
         footer={
@@ -1834,7 +1825,7 @@ export function CaseDetailPage() {
               disabled={busy || !closeForm.reason.trim()}
               onClick={saveClose}
             >
-              {legalCase.status === "Closed" ? "Reabrir" : "Cerrar expediente"}
+              {legalCase.status === "Closed" ? "Marcar activo" : "Finalizar proceso"}
             </Button>
           </>
         }

@@ -77,8 +77,8 @@ async function main() {
         assert.equal(await collapse.evaluate(button => getComputedStyle(button).outlineStyle), 'solid');
         await collapse.press('Enter');
         assert.equal(await page.locator('.app-sidebar').evaluate(sidebar => sidebar.getBoundingClientRect().width), 68);
-        const sedeLink = page.getByRole('link', { name: 'Administración de sedes', exact: true });
-        assert.equal(await sedeLink.getAttribute('title'), 'Administración de sedes');
+        const sedeLink = page.locator('[data-module="platform"] a[href="/sedes"]');
+        assert.equal(await sedeLink.getAttribute('title'), 'Bufetes y sedes');
         await sedeLink.click();
         await page.waitForURL(url => url.pathname === '/sedes');
         await page.locator('.tenant-row').first().waitFor();
@@ -88,6 +88,16 @@ async function main() {
       }
     }
     if (phase === 'after') {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.goto(`${base}/sedes`);
+      await page.locator('.tenant-form .button').waitFor();
+      await page.getByRole('button', { name: 'Abrir navegación', exact: true }).click();
+      await page.locator('[data-module="platform"] a[href="/sedes"]').waitFor({ state: 'visible' });
+      assert.equal(await page.locator('nav a[href="/vetos"]').count(), 1);
+      assert.equal(await page.locator('.sidebar-seat-context strong').textContent(), 'Petén');
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await page.screenshot({ path: path.join(artifacts, 'sidebar-mobile-390.png'), fullPage: true });
+      await page.getByRole('button', { name: 'Cerrar navegación', exact: true }).first().click();
       await page.goto(`${base}/sedes`);
       await page.locator('.tenant-form .button').waitFor();
       await page.emulateMedia({ reducedMotion: 'reduce' });

@@ -39,7 +39,7 @@ const labels: Record<string, string> = {
   DocumentCollection: "Recolección documental",
   Active: "Activo",
   Suspended: "Suspendido",
-  Closed: "Cerrado",
+  Closed: "Finalizado",
   Archived: "Archivado",
   Pending: "Pendiente",
   Submitted: "Presentado",

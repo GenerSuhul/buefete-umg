@@ -1,4 +1,4 @@
-/* Native platform administration only. Palette, navigation and action placement
+/* Verified platform administration. Palette, navigation and action placement
    remain owned by the existing design system and screen components. */
 .admin-center {
   --admin-font: "Segoe UI", Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
@@ -95,6 +95,7 @@
   .admin-center--collapsed .app-sidebar { padding-inline: 8px; }
   .admin-center--collapsed .sidebar-brand { grid-template-columns: 1fr; justify-items: center; gap: 4px; }
   .admin-center--collapsed .sidebar-brand > span,
+  .admin-center--collapsed .sidebar-seat-context,
   .admin-center--collapsed .sidebar-nav__eyebrow,
   .admin-center--collapsed .sidebar-home > span:last-child,
   .admin-center--collapsed .nav-group__trigger,

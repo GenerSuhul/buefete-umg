@@ -42,7 +42,8 @@ internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService 
             .Take(pageSize)
             .ToListAsync(cancellationToken);
 
-        return new PagedResult<ClientDto>(clients.Select(Map).ToList(), page, pageSize, total);
+        var statuses = await restrictions.GetStatusesAsync(clients.Select(client => client.Dpi).ToArray(), cancellationToken);
+        return new PagedResult<ClientDto>(clients.Select((client, index) => Map(client) with { Restriction = statuses[index] }).ToList(), page, pageSize, total);
     }
 
     public async Task<ClientDto> SetAttentionAsync(Guid id, SetClientAttentionRequest request, CancellationToken cancellationToken)
@@ -64,7 +65,7 @@ internal sealed class ClientService(BufeteDbContext dbContext, IDocumentService 
     {
         var client = await dbContext.Clients.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
             ?? throw new NotFoundException("No se encontró el cliente.");
-        return Map(client);
+        return Map(client) with { Restriction = await restrictions.GetStatusAsync(client.Dpi, cancellationToken) };
     }
 
     public async Task<ClientProfileDto> GetClientProfileAsync(Guid id, CancellationToken cancellationToken)

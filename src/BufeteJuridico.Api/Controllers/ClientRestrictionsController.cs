@@ -19,6 +19,14 @@ public sealed class ClientRestrictionsController(IClientRestrictionService servi
     public async Task<IActionResult> Create(CreateClientRestrictionRequest request, CancellationToken ct) =>
         StatusCode(201, await service.CreateAsync(request, ct));
 
+    [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "Administrador")]
+    public async Task<IActionResult> Remove(Guid id, RemoveClientRestrictionRequest request, CancellationToken ct)
+    {
+        await service.RemoveAsync(id, request, ct);
+        return NoContent();
+    }
+
     [HttpPost("check")]
     [Authorize(Policy = Permissions.ClientsWrite)]
     public async Task<IActionResult> Check(CheckClientRestrictionRequest request, CancellationToken ct) =>

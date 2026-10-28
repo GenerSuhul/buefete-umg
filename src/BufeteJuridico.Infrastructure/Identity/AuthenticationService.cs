@@ -70,6 +70,8 @@ internal sealed class AuthenticationService(
             throw new AuthenticationException("Usuario o contraseña incorrectos.");
         }
 
+        await EnsureStudentNotSuspendedAsync(user.Id, cancellationToken);
+
         user.FailedLoginAttempts = 0;
         user.LockoutEndUtc = null;
 
@@ -110,6 +112,7 @@ internal sealed class AuthenticationService(
             {
                 throw new AuthenticationException("El token de renovación expiró o fue revocado.");
             }
+            await EnsureStudentNotSuspendedAsync(refreshToken.UserId, cancellationToken);
 
             var claimed = await dbContext.RefreshTokens
                 .Where(item =>
@@ -277,6 +280,15 @@ internal sealed class AuthenticationService(
             TraceId = currentUser.TraceId,
             IpAddress = ipAddress
         });
+    }
+
+    private async Task EnsureStudentNotSuspendedAsync(Guid userId, CancellationToken ct)
+    {
+        var dpi = await dbContext.Students.AsNoTracking()
+            .Where(s => s.UserAccountId == userId)
+            .Select(s => s.Dpi).SingleOrDefaultAsync(ct);
+        if (dpi is not null && await tenantRegistry.IsStudentSuspendedAsync(dpi, ct))
+            throw new AuthenticationException("La cuenta del alumno está suspendida en todas las sedes.");
     }
 
     private static string GenerateRefreshToken()

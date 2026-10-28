@@ -73,6 +73,14 @@ Domain -> ninguna capa del sistema
 | `docs/arquitectura/` | decisiones técnicas y operación |
 | `docs/auditoria/` | evidencia de validaciones integrales |
 
+## Entrega al servidor: producción por IP
+
+Para preparar un servidor desde este repositorio, comenzar por
+[INSTRUCCIONES_SERVIDOR.md](INSTRUCCIONES_SERVIDOR.md). Contiene el encargo de
+instalación completa con Docker, acceso `https://IP:443`, TLS renovable, configuración
+real de producción y pendientes de aceptación. Los Compose actuales siguen siendo
+locales; el manifiesto productivo debe prepararse y verificarse en el servidor.
+
 ## Preparación local
 
 Requisitos: .NET SDK 10, Node.js, Docker Desktop y PowerShell 7.

@@ -17,6 +17,10 @@ import {
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "../routing/navigation";
 import { DetailTabs, InfoItem } from "../components/domain/Shared";
+import { WhatsAppLink } from "../components/domain/WhatsAppLink";
+import { StudentLegalStudyPanel } from "../components/domain/StudentLegalStudyPanel";
+import { StudentDisciplinePanel } from "../components/domain/StudentDisciplinePanel";
+import { StudentDisciplineAlert } from "../components/domain/StudentDisciplineAlert";
 import { DocumentAcquisition } from "../components/documents/DocumentAcquisition";
 import {
   Avatar,
@@ -109,6 +113,7 @@ export function StudentDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const [tab, setTab] = useState("enrollment");
+  const [disciplineRevision, setDisciplineRevision] = useState(0);
   const [action, setAction] = useState<
     "edit" | "access" | "requirement" | "status" | "card" | "unassign" | null
   >(null);
@@ -145,6 +150,7 @@ export function StudentDetailPage() {
     () => dataSource.getStudent(id),
     [id],
   );
+  const legalStudyStatus = useAsyncData(() => dataSource.getStudentLegalStudy(id), [id]);
 
   const deleteStudent = async (name: string) => {
     const accepted = await confirm({ title: "Eliminar alumno", message: `${name} perderá el acceso y dejará de aparecer en alumnos y asignaciones.`, confirmLabel: "Enviar a Eliminados", tone: "danger" });
@@ -165,6 +171,7 @@ export function StudentDetailPage() {
       />
     );
   const student = data.student;
+  const practiceClosed = Boolean(legalStudyStatus.data?.closure);
   const enrollment = data.enrollments[0];
   const accepted =
     enrollment?.requirements.filter((item) => item.status === "Accepted")
@@ -259,7 +266,7 @@ export function StudentDetailPage() {
         ageAtRegistration: null,
         studentCardNumber: editForm.studentCardNumber,
         dpi: editForm.dpi,
-        semester: editForm.semester ? Number(editForm.semester) : null,
+        semester: null,
         studyShift: editForm.studyShift || null,
         workplace: editForm.workplace || null,
         workPhone: editForm.workPhone || null,
@@ -424,11 +431,11 @@ export function StudentDetailPage() {
       <PageHeader
         eyebrow={`Carné ${student.studentCardNumber}`}
         title={student.fullName}
-        description={`${student.semester ?? "—"}.º semestre · Jornada ${student.studyShift?.toLowerCase() ?? "sin registrar"}`}
+        description={`Jornada ${student.studyShift?.toLowerCase() ?? "sin registrar"}`}
         actions={
           canWrite ? (
             <>
-              {!student.userAccountId ? (
+              {student.isActive && !practiceClosed && !student.userAccountId ? (
                 <Button onClick={startAccess}>
                   <UserRoundPlus size={17} />
                   Activar acceso
@@ -438,13 +445,13 @@ export function StudentDetailPage() {
                 <Pencil size={17} />
                 Editar perfil
               </Button>
-              <Button
+              {(student.isActive || (legalStudyStatus.data && !practiceClosed)) && <Button
                 variant={student.isActive ? "danger" : "secondary"}
                 disabled={busy}
                 onClick={toggleStudentActive}
               >
                 {student.isActive ? "Dar de baja" : "Reactivar"}
-              </Button>
+              </Button>}
               {canDelete ? <Button variant="danger" disabled={busy} onClick={() => deleteStudent(student.fullName)}><Trash2 size={17} />Eliminar</Button> : null}
               {canAssign && canAssignStudent(data) ? <Button onClick={() => navigate(`/expedientes?assignStudentId=${encodeURIComponent(student.id)}`)}>
                 <FolderKanban size={17} />
@@ -464,8 +471,9 @@ export function StudentDetailPage() {
           <h2>{student.fullName}</h2>
           <p>{student.email}</p>
           <Badge tone={student.isActive ? "success" : "neutral"}>
-            {student.isActive ? "Perfil activo" : "Inactivo"}
+            {practiceClosed ? "Práctica cerrada" : student.isActive ? "Perfil activo" : "Inactivo"}
           </Badge>
+          <StudentDisciplineAlert studentId={student.id} revision={disciplineRevision} onOpen={() => setTab('discipline')} />
           <div className="profile-contact">
             <span>
               <Mail size={15} />
@@ -475,6 +483,7 @@ export function StudentDetailPage() {
               <Phone size={15} />
               {student.mobilePhone}
             </span>
+            <WhatsAppLink phone={student.mobilePhone} />
             <span>
               <MapPin size={15} />
               {student.residenceAddress}
@@ -503,11 +512,15 @@ export function StudentDetailPage() {
                 count: enrollment?.requirements.length,
               },
               { id: "cases", label: "Casos", count: data.cases.length },
+              { id: "legal-study", label: "Estudio jurídico" },
+              { id: "discipline", label: "Amonestaciones" },
               { id: "general", label: "Información" },
             ]}
             active={tab}
             onChange={setTab}
           />
+          {tab === "legal-study" && <StudentLegalStudyPanel student={data.student} canWrite={canWrite} onChanged={() => { reload(); legalStudyStatus.reload(); }} />}
+          {tab === "discipline" && <StudentDisciplinePanel student={data.student} onChanged={() => { reload(); setDisciplineRevision(value => value + 1); }} />}
           {tab === "enrollment" && enrollment && (
             <div className="detail-column">
               <Card>
@@ -689,7 +702,6 @@ export function StudentDetailPage() {
                   label="Fecha de inscripción"
                   value={formatDate(student.registrationDate)}
                 />
-                <InfoItem label="Semestre" value={student.semester} />
                 <InfoItem
                   label="Lugar de trabajo"
                   value={student.workplace ?? "No trabaja actualmente"}
@@ -927,16 +939,6 @@ export function StudentDetailPage() {
             />
           </Field>
           <div className="form-section-heading field--wide"><strong>Información académica</strong><span>Datos de la práctica y registro universitario.</span></div>
-          <Field label="Semestre">
-            <input
-              type="number"
-              min="1"
-              value={editForm.semester}
-              onChange={(event) =>
-                setEditForm({ ...editForm, semester: event.target.value })
-              }
-            />
-          </Field>
           <Field label="Jornada">
             <Select
               value={editForm.studyShift}
@@ -945,9 +947,9 @@ export function StudentDetailPage() {
               }
             >
               <option value="">Seleccione una jornada</option>
-              <option value="Matutina">Matutina</option>
-              <option value="Vespertina">Vespertina</option>
-              <option value="Nocturna">Nocturna</option>
+              <option value="Entre semana">Entre semana</option>
+              <option value="Sábado">Sábado</option>
+              <option value="Domingo">Domingo</option>
             </Select>
           </Field>
           <AppDatePicker

@@ -12,9 +12,11 @@ import {
   ensure,
   id,
   rootId,
+  normalizeInstitutionalProfile,
   type DemoState,
 } from "./model";
 import type { DemoTenant } from "./client";
+import { isStudentBlocked } from './studentDiscipline';
 
 const connection = () => {
   ensure(
@@ -45,10 +47,23 @@ export function initializeDemo() {
     await sql`CREATE TABLE IF NOT EXISTS demo_sessions (hash text PRIMARY KEY, tenant_id uuid NOT NULL REFERENCES demo_tenants(id), user_id uuid NOT NULL, platform_admin boolean NOT NULL, expires_at timestamptz NOT NULL)`;
     await sql`CREATE INDEX IF NOT EXISTS demo_sessions_expiry ON demo_sessions(expires_at)`;
     await sql`CREATE TABLE IF NOT EXISTS demo_login_attempts (key text PRIMARY KEY, attempts integer NOT NULL, reset_at timestamptz NOT NULL)`;
+    await sql`CREATE TABLE IF NOT EXISTS demo_client_restrictions (id uuid PRIMARY KEY, dpi text NOT NULL, reason text NOT NULL, source_tenant_code text NOT NULL, issued_by_name text NOT NULL, created_at_utc timestamptz NOT NULL DEFAULT now(), removed_at_utc timestamptz, removed_by_name text, removal_reason text)`;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS demo_client_restrictions_active_dpi ON demo_client_restrictions(dpi) WHERE removed_at_utc IS NULL`;
+    await sql`CREATE TABLE IF NOT EXISTS demo_student_disciplines (id uuid PRIMARY KEY,dpi text NOT NULL,student_name text NOT NULL,kind text NOT NULL,reason text NOT NULL,starts_on date,ends_on date,document_id uuid,source_tenant_code text NOT NULL,issued_by_name text NOT NULL,created_at_utc timestamptz NOT NULL DEFAULT now(),revoked_at_utc timestamptz,revocation_reason text,revoked_by_user_id uuid)`;
+    await sql`CREATE INDEX IF NOT EXISTS demo_student_disciplines_dpi ON demo_student_disciplines(dpi,created_at_utc DESC)`;
     const seed = emptyState(
       process.env.DEMO_ADMIN_EMAIL ?? "licenciado@demo.umg.gt",
     );
     await sql`INSERT INTO demo_tenants(id,code,name,state) VALUES ('84a93391-1076-4b52-9ba5-7cb7fcb06505','peten','Bufete Popular UMG · Petén',${sql.json(seed as never)}) ON CONFLICT(code) DO NOTHING`;
+    await sql.begin(async (transaction) => {
+      const legacy = transaction.json({ users: [{ id: rootId, fullName: "Licenciado Demo" }] });
+      const rows = await transaction`SELECT id,state FROM demo_tenants WHERE state @> ${legacy}::jsonb FOR UPDATE`;
+      for (const row of rows) {
+        const state = row.state as DemoState;
+        if (normalizeInstitutionalProfile(state))
+          await transaction`UPDATE demo_tenants SET state=${transaction.json(state as never)},revision=revision+1 WHERE id=${row.id}`;
+      }
+    });
   })().catch((error) => {
     initialized = undefined;
     throw error;
@@ -84,6 +99,9 @@ export async function sessionFor(token: string) {
     DemoSession[]
   >`SELECT * FROM demo_sessions WHERE hash=${tokenHash(token)} AND expires_at>now()`;
   ensure(session, "La sesión finalizó. Inicie sesión nuevamente.", 401);
+  const [tenant] = await database()`SELECT state FROM demo_tenants WHERE id=${session.tenant_id}`;
+  const student = (tenant?.state as DemoState | undefined)?.students.find(x => x.student.userAccountId === session.user_id);
+  if (student) ensure(!await isStudentBlocked(student.student.dpi, database()), 'El alumno tiene una suspensión global vigente.', 401);
   return session;
 }
 export async function issueSession(
@@ -173,6 +191,8 @@ export async function login(email: string, password: string, ip: string) {
         effectiveActive(u),
     );
     if (user && checkPassword(password, state.passwords[user.id] ?? "")) {
+      const student = state.students.find(x => x.student.userAccountId === user.id);
+      if (student) ensure(!await isStudentBlocked(student.student.dpi, sql), 'El alumno tiene una suspensión global vigente.', 403);
       await sql`DELETE FROM demo_login_attempts WHERE key=${key}`;
       return issueSession(tenant.id, user.id, false);
     }
@@ -270,7 +290,7 @@ export const revoke = (session: DemoSession) =>
 export async function inTenant<T>(
   session: DemoSession,
   write: boolean,
-  fn: (state: DemoState) => Promise<T> | T,
+  fn: (state: DemoState, sql: postgres.TransactionSql) => Promise<T> | T,
 ): Promise<T> {
   const result = await database().begin(async (sql) => {
     const [row] = write
@@ -284,7 +304,7 @@ export async function inTenant<T>(
       "La cuenta no tiene acceso vigente.",
       401,
     );
-    const value = await fn(state);
+    const value = await fn(state, sql);
     if (write)
       await sql`UPDATE demo_tenants SET state=${sql.json(state as never)},revision=revision+1 WHERE id=${session.tenant_id}`;
     return value;

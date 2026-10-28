@@ -27,4 +27,28 @@ public sealed class DeletedRecordsController(IDeletedRecordService service) : Ap
         await service.RestoreAsync(type, id, cancellationToken);
         return NoContent();
     }
+
+    [HttpGet("{type}/{id:guid}/purge-preview")]
+    [Authorize(Policy = Permissions.DeletedRecordsRead)]
+    public async Task<ActionResult<PurgePreviewDto>> PreviewPurge(DeletedRecordType type, Guid id, CancellationToken cancellationToken)
+    {
+        if (User.FindFirst("platform_admin")?.Value != "true") return Forbid();
+        return Ok(await service.PreviewPurgeAsync(type, id, cancellationToken));
+    }
+
+    [HttpDelete("{type}/{id:guid}/purge")]
+    [Authorize(Policy = Permissions.DeletedRecordsRead)]
+    public async Task<ActionResult<PurgeResultDto>> Purge(DeletedRecordType type, Guid id, PurgeRecordRequest request, CancellationToken cancellationToken)
+    {
+        if (User.FindFirst("platform_admin")?.Value != "true") return Forbid();
+        return Ok(await service.PurgeAsync(type, id, request.Reference, cancellationToken));
+    }
+
+    [HttpPost("storage-cleanup")]
+    [Authorize(Policy = Permissions.DeletedRecordsRead)]
+    public async Task<ActionResult<object>> RetryStorageCleanup(CancellationToken cancellationToken)
+    {
+        if (User.FindFirst("platform_admin")?.Value != "true") return Forbid();
+        return Ok(new { pending = await service.RetryPendingStorageDeletesAsync(cancellationToken) });
+    }
 }

@@ -66,10 +66,12 @@
 .deleted-records-list__icon { width: 42px; height: 42px; border-radius: 12px; background: #fff0f1; color: #b42334; place-items: center; }
 .deleted-records-list strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .deleted-records-list small { margin-top: 3px; color: var(--ink-500); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deleted-records-list__actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 
 @media (max-width: 900px) {
   .deleted-records-list article { grid-template-columns: 44px minmax(0, 1fr) auto; }
   .deleted-records-list article > span:nth-of-type(n+3), .deleted-records-list article > .badge { display: none; }
+  .deleted-records-list__actions { grid-column: 2 / -1; justify-content: flex-start; }
   .admin-list article { grid-template-columns: 46px 1fr auto; }
   .admin-list article > span:nth-child(3), .admin-list article > .button { display: none; }
   .user-directory-list article { grid-template-columns: 46px minmax(0, 1fr) auto; }

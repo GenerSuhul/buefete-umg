@@ -144,6 +144,13 @@ export function CasesPage() {
   const selectedProcess = options.data?.processTypes.find(
     (item) => item.id === form.processTypeId,
   );
+  const activeRequirements = selectedProcess?.requirements.filter((item) => item.isActive) ?? [];
+  const loadProcessTypes = useCallback(async (term: string) =>
+    (options.data?.processTypes ?? [])
+      .filter((item) => `${item.code} ${item.name}`.toLocaleLowerCase().includes(term.trim().toLocaleLowerCase()))
+      .map((item) => ({ value: item.id, label: `${item.name} · ${item.code}` })),
+    [options.data?.processTypes],
+  );
   const update = (key: keyof typeof emptyForm, value: string) =>
     setForm((current) => ({ ...current, [key]: value }));
   const open = () => {
@@ -159,7 +166,7 @@ export function CasesPage() {
   const validateStep = (target = step) => {
     if (selectedClient.loading && form.clientId) return 'Verificando la ficha del usuario…';
     if (selectedClient.error) return 'No se pudo verificar la ficha. Seleccione nuevamente el usuario.';
-    if (selectedClient.data?.restriction?.isRestricted) return 'Atención bloqueada: este DPI tiene un veto global permanente en todas las sedes.';
+    if (selectedClient.data?.restriction?.isRestricted) return 'Atención bloqueada: este DPI tiene un bloqueo permanente en lista negra en todas las sedes.';
     if (selectedClient.data && (!selectedClient.data.client.dpi || selectedClient.data.restriction?.hasValidIdentity === false)) return 'Corrija el DPI en la ficha del usuario antes de abrir un expediente.';
     if (target === 0 && (!form.clientId || !form.processTypeId))
       return "Seleccione un usuario y un tipo de proceso.";
@@ -297,7 +304,7 @@ export function CasesPage() {
             <option value="Active">Activos</option>
             <option value="DocumentCollection">Recolección documental</option>
             <option value="Suspended">Suspendidos</option>
-            <option value="Closed">Cerrados</option>
+            <option value="Closed">Finalizados</option>
           </Select>
         </FilterBar>
         {loading ? (
@@ -429,20 +436,7 @@ export function CasesPage() {
             ) : (
               <RelationLookup label="Usuario" required value={form.clientId} onChange={(value) => update("clientId", value)} load={loadClients} emptyLabel="Seleccione un usuario" />
             )}
-            <Field label="Tipo de proceso">
-              <Select
-                value={form.processTypeId}
-                onChange={(event) =>
-                  update("processTypeId", event.target.value)
-                }
-              >
-                {options.data?.processTypes.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+            <RelationLookup label="Tipo de proceso" required value={form.processTypeId} onChange={(value) => update("processTypeId", value)} load={loadProcessTypes} placeholder="Buscar tipo de proceso por nombre o código…" emptyLabel="Seleccione un tipo de proceso" />
             {!lockedClient && <div className="wizard-inline-note"><span>¿Es una persona nueva? <Link to="/personas/clientes">Registre primero al usuario</Link>. Desde su ficha podrá abrir el proceso sin volver a buscarlo.</span></div>}
             <ReadOnlyValue
               label="Estado inicial"
@@ -451,7 +445,7 @@ export function CasesPage() {
             />
             <ReadOnlyValue
               label="Requisitos configurados"
-              value={`${selectedProcess?.requirements.length ?? 0} elementos`}
+              value={`${activeRequirements.length} elementos`}
               hint="Tipo de proceso seleccionado"
             />
             {selectedProcess?.description && (
@@ -467,8 +461,8 @@ export function CasesPage() {
             description="Revise el checklist del proceso. Al abrir el expediente podrá adjuntar o escanear cada documento, revisar los requisitos y asignar un alumno habilitado. Los documentos pendientes no se marcan como recibidos."
           >
             <div className="requirement-preview field--wide">
-              {selectedProcess?.requirements.length ? (
-                selectedProcess.requirements.map((requirement) => (
+              {activeRequirements.length ? (
+                activeRequirements.map((requirement) => (
                   <article
                     key={requirement.id}
                     className="requirement-preview__item"
@@ -589,7 +583,7 @@ export function CasesPage() {
                   <ReadOnlyValue label="Etapa" value="Recolección documental" />
                   <ReadOnlyValue
                     label="Checklist"
-                    value={`${selectedProcess?.requirements.length ?? 0} requisitos`}
+                    value={`${activeRequirements.length} requisitos`}
                   />
                 </div>
               </section>

@@ -1,4 +1,7 @@
 import { NextRequest } from "next/server";
+import { createRestriction, ensureClientAllowed, listRestrictions, removeRestriction, restrictionStatus } from '../../../demo/clientRestrictions';
+import { practiceNoticeOperation } from '../../../demo/practiceNotices';
+import { ensureStudentNotBlocked, studentDisciplineOperation } from '../../../demo/studentDiscipline';
 import {
   authorizeDocument,
   isReadOperation,
@@ -48,13 +51,13 @@ export async function POST(request: NextRequest) {
     );
     ensure(
       Number(request.headers.get("content-length") ?? 0) <= 4.3 * 1024 * 1024,
-      "La solicitud supera el límite de la demo.",
+      "La solicitud supera el tamaño máximo permitido.",
       413,
     );
     const raw = await request.text();
     ensure(
       raw.length <= 4.3 * 1024 * 1024,
-      "La solicitud supera el límite de la demo.",
+      "La solicitud supera el tamaño máximo permitido.",
       413,
     );
     let body: { method: string; args?: unknown[] };
@@ -78,7 +81,7 @@ export async function POST(request: NextRequest) {
       return Response.json(
         {
           status: "Healthy",
-          checks: [{ name: "demo-postgresql", status: "Healthy" }],
+          checks: [{ name: "postgresql", status: "Healthy" }],
         },
         { headers: noCache },
       );
@@ -103,6 +106,16 @@ export async function POST(request: NextRequest) {
     await inTenant(session, false, () => null);
     if (method === "getWorkspace")
       return Response.json(await workspace(session), { headers: noCache });
+    if (method === 'checkClientRestriction')
+      return Response.json(await restrictionStatus(args[0]), { headers: noCache });
+    if (method === 'listClientRestrictions')
+      return Response.json(await listRestrictions(session, String(args[0] ?? ''), Number(args[1] ?? 1)), { headers: noCache });
+    if (method === 'createClientRestriction')
+      return Response.json(await createRestriction(session, String(args[0]), String(args[1]), String(args[2])), { headers: noCache });
+    if (method === 'removeClientRestriction') {
+      await removeRestriction(session, String(args[0]), String(args[1]));
+      return Response.json(null, { headers: noCache });
+    }
     if (method === "createTenant") {
       const d = args[0] as { code: string; name: string };
       return Response.json(await createTenant(session, d.code, d.name), {
@@ -113,12 +126,39 @@ export async function POST(request: NextRequest) {
       return Response.json(await switchTenant(session, String(args[0])), {
         headers: noCache,
       });
-    const write = !isReadOperation(method) || method === "previewScanSession";
-    const result = await inTenant(session, write, async (state) => {
+    const write = !(isReadOperation(method) || method === 'downloadStudentDisciplineDocument') || method === "previewScanSession";
+    const result = await inTenant(session, write, async (state, transaction) => {
       const user = requireValue(
         state.users.find((u) => u.id === session.user_id),
       );
       const admin = user.roles.includes("AdministradorGeneral");
+      if (['listStudentDisciplines','createStudentDiscipline','revokeStudentDiscipline','downloadStudentDisciplineDocument'].includes(method))
+        return studentDisciplineOperation(state, session, method, args, transaction);
+      if (method === 'registerStudent') await ensureStudentNotBlocked(String((args[0] as { student?: { dpi?: string } })?.student?.dpi ?? ''), transaction);
+      if (['createEnrollment','setStudentActive','provisionStudentAccess','assignStudent','changeEnrollmentStatus','setUserAccess','updateStudent'].includes(method)) {
+        const studentId = method === 'assignStudent' ? String(args[1]) : method === 'changeEnrollmentStatus'
+          ? state.students.find(x => x.enrollments.some(e => e.id === args[0]))?.student.id : method === 'setUserAccess'
+          ? state.students.find(x => x.student.userAccountId === args[0])?.student.id : String(args[0]);
+        const student = state.students.find(x => x.student.id === studentId)?.student;
+        const advancing = method !== 'setStudentActive' || args[1] === true;
+        const access = method !== 'setUserAccess' || args[1] === true;
+        const status = method !== 'changeEnrollmentStatus' || ['Submitted','Admitted','UnderReview','Approved'].includes(String((args[1] as { status?: string })?.status));
+        if (student && advancing && access && status)
+          await ensureStudentNotBlocked(method === 'updateStudent' ? String((args[1] as { dpi?: string })?.dpi ?? student.dpi) : student.dpi, transaction);
+      }
+      if (method === 'listPracticeNotices' || method === 'markPracticeNoticeRead' || method === 'markPracticeNoticeSounded')
+        return practiceNoticeOperation(state, user, method, args);
+      if (method === 'createClient') await ensureClientAllowed((args[0] as { dpi?: string })?.dpi, transaction);
+      if (method === 'updateClient' || method === 'setClientAttention') {
+        const current = requireValue(state.clients.find((candidate) => candidate.client.id === args[0]));
+        const dpi = method === 'updateClient' ? ((args[1] as { dpi?: string })?.dpi ?? current.client.dpi) : current.client.dpi;
+        if (method !== 'setClientAttention' || args[1] === true) await ensureClientAllowed(dpi, transaction);
+      }
+      if (method === 'openCase' || method === 'createIncomeDeclaration') {
+        const clientId = method === 'openCase' ? (args[0] as { clientId?: string })?.clientId : String(args[0]);
+        const current = requireValue(state.clients.find((candidate) => candidate.client.id === clientId));
+        await ensureClientAllowed(current.client.dpi, transaction);
+      }
       if (/Scan|scan/.test(method))
         return scanOperation(state, user, session.tenant_id, method, args);
       if (method === "uploadDocument")
@@ -176,7 +216,7 @@ export async function POST(request: NextRequest) {
         );
         ensure(
           target.id !== rootId,
-          "La clave de plataforma se administra fuera de la demo.",
+          "La clave de plataforma se administra mediante soporte.",
         );
         if (method === "changeOwnPassword")
           ensure(
@@ -193,6 +233,7 @@ export async function POST(request: NextRequest) {
           state.students.find((p) => p.student.id === args[0]),
         ).student;
         ensure(!student.userAccountId, "El alumno ya tiene una cuenta.");
+        ensure(student.isActive && !state.studentLegalStudies?.[student.id]?.closure, 'La práctica del alumno ya está cerrada.');
         const data = args[1] as Record<string, unknown>;
         const account = operate(state, user, "createUser", [
           {
@@ -219,13 +260,22 @@ export async function POST(request: NextRequest) {
           String((args[0] as { password: string }).password),
         );
       if (method === "registerStudent") {
-        const r = response as { access: { userAccountId: string } };
-        state.passwords[r.access.userAccountId] = hashPassword(
+        const r = response as { access: { userAccountId: string } | null };
+        if (r.access) state.passwords[r.access.userAccountId] = hashPassword(
           String((args[0] as { access: { password: string } }).access.password),
         );
       }
       return response;
     });
+    if (method === 'getClient') {
+      const profile = result as { client: { dpi: string | null } };
+      return Response.json({ ...profile, restriction: await restrictionStatus(profile.client.dpi) }, { headers: noCache });
+    }
+    if (method === 'listClients') {
+      const page = result as { items: Array<{ dpi: string | null }> };
+      const items = await Promise.all(page.items.map(async item => ({ ...item, restriction: await restrictionStatus(item.dpi) })));
+      return Response.json({ ...page, items }, { headers: noCache });
+    }
     return Response.json(result, { headers: noCache });
   } catch (error) {
     if (error instanceof DemoError)

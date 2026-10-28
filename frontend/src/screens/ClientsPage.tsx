@@ -1,3 +1,4 @@
+import { clientAttention } from '../utils/clientAttention';
 import {
   ArrowLeft,
   ArrowRight,
@@ -29,7 +30,6 @@ import {
 } from "../components/ui";
 import { dataSource } from "../data/dataSource";
 import { clientRestrictions } from '../data/clientRestrictions';
-import { demoEnabled } from '../demo/client';
 import { feedbackHandled } from "../components/ui/feedback/operationFeedback";
 import { useNotify } from "../components/ui/Feedback";
 import { useAsyncData } from "../hooks/useAsyncData";
@@ -175,10 +175,10 @@ export function ClientsPage() {
       setFormError(message);
       return;
     }
-    if (step === 0 && !demoEnabled) {
+    if (step === 0) {
       setBusy(true);
       try {
-        if ((await clientRestrictions.check(form.dpi)).isRestricted) { setFormError('Atención bloqueada: este DPI tiene un veto global permanente en todas las sedes.'); return; }
+        if ((await clientRestrictions.check(form.dpi)).isRestricted) { setFormError('Atención bloqueada: este DPI tiene un bloqueo permanente en lista negra en todas las sedes.'); return; }
       } catch (cause) { setFormError(cause instanceof Error ? cause.message : 'No se pudo verificar el DPI. Intente nuevamente.'); return; }
       finally { setBusy(false); }
     }
@@ -347,8 +347,8 @@ export function ClientsPage() {
       <Card className="directory-card">
         <Field label="Estado de atención">
           <Select value={attention} onChange={event => { setAttention(event.target.value); setPage(1); }}>
-            <option value="active">Con atención vigente</option>
-            <option value="inactive">Sin atención vigente</option>
+            <option value="active">Atención no finalizada</option>
+            <option value="inactive">Atención finalizada</option>
           </Select>
         </Field>
         <FilterBar
@@ -396,8 +396,8 @@ export function ClientsPage() {
                     </strong>
                     <small>{client.occupation}</small>
                   </span>
-                  <Badge tone={client.isActive ? "success" : "neutral"}>
-                    {client.isActive ? "Vigente" : "Sin atención vigente"}
+                  <Badge tone={clientAttention(client).tone}>
+                    {clientAttention(client).label}
                   </Badge>
                 </Link>
               ))}

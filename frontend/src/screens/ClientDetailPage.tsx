@@ -1,6 +1,6 @@
+import { clientAttention } from '../utils/clientAttention';
 import {
   ArrowLeft,
-  ArrowRight,
   BriefcaseBusiness,
   FileSignature,
   FilePlus2,
@@ -16,6 +16,7 @@ import {
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "../routing/navigation";
 import { DetailTabs, InfoItem, Pagination } from "../components/domain/Shared";
+import { WhatsAppLink } from "../components/domain/WhatsAppLink";
 import { ClientRestrictionDialog } from '../components/domain/ClientRestrictionDialog';
 import { demoEnabled } from '../demo/client';
 import {
@@ -33,8 +34,6 @@ import {
   ReadOnlyValue,
   SectionHeading,
   Select,
-  WizardProgress,
-  WizardStep,
 } from "../components/ui";
 import { dataSource } from "../data/dataSource";
 import { useAuth } from "../context/AuthContext";
@@ -54,13 +53,6 @@ import {
   isCompleteCui,
   isCompleteGuatemalaPhone,
 } from "../utils/inputMasks";
-
-const clientEditSteps = [
-  { id: "identity", label: "Identidad", description: "Datos personales" },
-  { id: "contact", label: "Contacto y trabajo", description: "Ubicación e ingresos" },
-  { id: "reception", label: "Recepción", description: "Atención solicitada" },
-  { id: "review", label: "Confirmar", description: "Revisión final" },
-];
 
 const emptyClientEdit = {
   fullName: "", birthDate: "", birthPlace: "", nationality: "", sex: "",
@@ -96,7 +88,6 @@ export function ClientDetailPage() {
   const [incomeOpen, setIncomeOpen] = useState(false);
   const [restrictionOpen, setRestrictionOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const [editStep, setEditStep] = useState(0);
   const [editForm, setEditForm] = useState(emptyClientEdit);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
@@ -173,11 +164,10 @@ export function ClientDetailPage() {
       receptionPlace: client.receptionPlace,
       receptionDate: client.receptionDate,
     });
-    setEditStep(0);
     setFormError("");
     setEditOpen(true);
   };
-  const validateEditStep = (target = editStep) => {
+  const validateEditStep = (target: number) => {
     if (target === 0 && (!editForm.fullName.trim() || !editForm.dpi.trim())) return "Nombre completo y DPI son obligatorios.";
     if (target === 0 && !isCompleteCui(editForm.dpi)) return "El DPI debe contener los 13 dígitos del CUI.";
     if (target === 0 && editForm.birthDate && editAge === null) return "La fecha de nacimiento no puede ser posterior a la recepción.";
@@ -187,16 +177,10 @@ export function ClientDetailPage() {
     if (target === 2 && (!editForm.assistanceRequested || !editForm.receptionPlace.trim() || !editForm.receptionDate)) return "Asistencia, lugar y fecha de recepción son obligatorios.";
     return null;
   };
-  const nextEdit = () => {
-    const message = validateEditStep();
-    if (message) return setFormError(message);
-    setFormError("");
-    setEditStep((current) => Math.min(current + 1, clientEditSteps.length - 1));
-  };
   const saveClient = async () => {
     for (let target = 0; target <= 2; target += 1) {
       const message = validateEditStep(target);
-      if (message) { setEditStep(target); setFormError(message); return; }
+      if (message) { setFormError(message); return; }
     }
     setBusy(true);
     setFormError("");
@@ -341,17 +325,18 @@ export function ClientDetailPage() {
         actions={
           <>
             {canWrite ? <Button variant="secondary" disabled={busy || data.restriction?.isRestricted} onClick={openEdit}><Pencil size={17} />Editar datos</Button> : null}
-            {!demoEnabled && user?.roles.includes('Administrador') && !data.restriction?.isRestricted && client.dpi ? <Button variant="danger" onClick={() => setRestrictionOpen(true)}>Vetar atención</Button> : null}
+            {user?.roles.some(role => role === 'Administrador' || (demoEnabled && role === 'AdministradorGeneral')) && !data.restriction?.isRestricted && client.dpi ? <Button variant="danger" onClick={() => setRestrictionOpen(true)}>Agregar a lista negra</Button> : null}
+            {user?.roles.some(role => role === 'Administrador' || (demoEnabled && role === 'AdministradorGeneral')) && data.restriction?.isRestricted && client.dpi ? <Button variant="secondary" onClick={() => navigate(`/vetos?dpi=${encodeURIComponent(client.dpi ?? '')}`)}>Habilitar nuevamente</Button> : null}
             {canWrite ? <Button variant="secondary" disabled={busy || (!client.isActive && data.restriction?.isRestricted)} onClick={changeAttention}>{client.isActive ? "Finalizar atención" : "Reactivar atención"}</Button> : null}
             {canDelete ? <Button variant="danger" disabled={busy} onClick={deleteClient}><Trash2 size={17} />Eliminar</Button> : null}
             {canOpenCases ? <Button disabled={!client.isActive || data.restriction?.isRestricted || data.restriction?.hasValidIdentity === false} onClick={() => navigate(`/expedientes?clientId=${id}`)}><FolderKanban size={17} />Abrir proceso</Button> : null}
           </>
         }
       />
-      {!client.isActive && <div role="status" className="confirmation-warning">Sin atención vigente. La ficha y el historial se conservan. Reactiva la atención antes de abrir un nuevo proceso.</div>}
+      {!client.isActive && !data.restriction?.isRestricted && <div role="status" className="confirmation-warning">Sin atención vigente. La ficha y el historial se conservan. Reactiva la atención antes de abrir un nuevo proceso.</div>}
       {data.restriction?.hasValidIdentity === false && <div role="status" className="confirmation-warning">El DPI histórico necesita corrección. Puede consultar el historial y editar la ficha; complete un CUI válido de 13 dígitos antes de continuar la atención.</div>}
-      {data.restriction?.isRestricted && <div role="alert" className="confirmation-warning">Atención bloqueada por veto global permanente para este DPI. El historial se conserva. Referencia: {data.restriction.reference}.</div>}
-      {restrictionOpen && <ClientRestrictionDialog dpi={client.dpi ?? ''} onClose={() => setRestrictionOpen(false)} onSaved={() => { setRestrictionOpen(false); reload(); notify.success({ title: 'Atención bloqueada', message: 'El veto permanente se aplica a todas las sedes de esta plataforma.' }); }} />}
+      {data.restriction?.isRestricted && <div role="alert" className="confirmation-warning">Atención bloqueada: este DPI está en lista negra de forma permanente. El historial se conserva. Referencia: {data.restriction.reference}.</div>}
+      {restrictionOpen && <ClientRestrictionDialog dpi={client.dpi ?? ''} onClose={() => setRestrictionOpen(false)} onSaved={() => { setRestrictionOpen(false); reload(); notify.success({ title: 'Atención bloqueada', message: 'El bloqueo permanente en lista negra se aplica a todas las sedes de esta plataforma.' }); }} />}
       <div className="profile-layout">
         <Card className="profile-summary">
           <div className="profile-summary__avatar">
@@ -363,14 +348,15 @@ export function ClientDetailPage() {
           </div>
           <h2>{client.fullName}</h2>
           <p>{client.occupation ?? "Ocupación no registrada"}</p>
-          <Badge tone={client.isActive ? "success" : "neutral"}>
-            {client.isActive ? "Atención vigente" : "Sin atención vigente"}
+          <Badge tone={clientAttention(client, data.restriction).tone}>
+            {clientAttention(client, data.restriction).label}
           </Badge>
           <div className="profile-contact">
             <span>
               <Phone size={15} />
               {client.mobilePhone || client.phone || "Sin teléfono"}
             </span>
+            <WhatsAppLink phone={client.mobilePhone || client.phone} />
             <span>
               <MapPin size={15} />
               {client.residenceAddress}
@@ -395,11 +381,6 @@ export function ClientDetailPage() {
           <DetailTabs
             tabs={[
               { id: "general", label: "Información" },
-              {
-                id: "documents",
-                label: "Papelería",
-                count: documents.data?.totalCount,
-              },
               { id: "cases", label: "Procesos", count: data.cases.length },
               {
                 id: "income",
@@ -482,11 +463,11 @@ export function ClientDetailPage() {
               </div>
             </Card>
           )}
-          {tab === "documents" && (
+          {tab === "income" && (
             <Card>
               <SectionHeading
-                title="Papelería del usuario"
-                description="Archivos y versiones"
+                title="Documentos asociados"
+                description="Archivos y versiones del usuario"
                 action={canAttachDocuments && !data.restriction?.isRestricted ?
                   <Button size="sm" onClick={openDocuments}>
                     <FilePlus2 size={15} />
@@ -632,22 +613,17 @@ export function ClientDetailPage() {
         size="xl"
         open={editOpen}
         onClose={() => !busy && setEditOpen(false)}
-        title="Editar ficha del usuario"
-        description="Actualice la información de recepción por secciones."
+        title="Editar usuario"
+        description="Actualice los datos necesarios y guarde los cambios."
         footer={
           <>
             <Button variant="secondary" disabled={busy} onClick={() => setEditOpen(false)}>Cancelar</Button>
-            {editStep > 0 ? <Button variant="ghost" disabled={busy} onClick={() => { setFormError(""); setEditStep((current) => current - 1); }}><ArrowLeft size={16} />Atrás</Button> : null}
-            {editStep < clientEditSteps.length - 1
-              ? <Button disabled={busy} onClick={nextEdit}>Continuar<ArrowRight size={16} /></Button>
-              : <Button disabled={busy} onClick={saveClient}>{busy ? "Guardando…" : "Guardar cambios"}</Button>}
+            <Button disabled={busy} onClick={saveClient}>{busy ? "Guardando…" : "Guardar cambios"}</Button>
           </>
         }
       >
-        <WizardProgress steps={clientEditSteps} currentStep={editStep} allowDirectNavigation onStepChange={(target) => { setFormError(""); setEditStep(target); }} />
         {formError ? <div className="form-error" role="alert">{formError}</div> : null}
-        {editStep === 0 ? (
-          <WizardStep title="Identidad del usuario" description="Datos de identificación y estado personal.">
+        <div className="form-grid">
             <Field label="Nombre completo"><input value={editForm.fullName} onChange={(event) => updateEdit("fullName", event.target.value)} autoComplete="name" /></Field>
             <Field label="DPI"><input value={editForm.dpi} onChange={(event) => updateEdit("dpi", formatCui(event.target.value))} inputMode="numeric" maxLength={15} placeholder="0000 00000 0000" /></Field>
             <AppDatePicker label="Fecha de nacimiento" value={editForm.birthDate} onChange={(value) => updateEdit("birthDate", value)} preset="birthDate" max={editForm.receptionDate} />
@@ -657,10 +633,8 @@ export function ClientDetailPage() {
             <Field label="Sexo"><Select value={editForm.sex} onChange={(event) => updateEdit("sex", event.target.value)}><option value="">No registrado</option><option value="Femenino">Femenino</option><option value="Masculino">Masculino</option><option value="Otro">Otro</option><option value="Prefiere no indicar">Prefiere no indicar</option></Select></Field>
             <Field label="Estado civil"><Select value={editForm.maritalStatus} onChange={(event) => updateEdit("maritalStatus", event.target.value)}><option value="">No registrado</option><option value="Soltero(a)">Soltero(a)</option><option value="Casado(a)">Casado(a)</option><option value="Unido(a)">Unido(a)</option><option value="Divorciado(a)">Divorciado(a)</option><option value="Viudo(a)">Viudo(a)</option></Select></Field>
             <Field label="Escolaridad"><input value={editForm.education} onChange={(event) => updateEdit("education", event.target.value)} /></Field>
-          </WizardStep>
-        ) : null}
-        {editStep === 1 ? (
-          <WizardStep title="Contacto, trabajo e ingresos" description="Datos para localizar a la persona y completar el estudio socioeconómico.">
+        </div>
+        <div className="form-grid">
             <Field label="Dirección de residencia" wide><textarea value={editForm.residenceAddress} onChange={(event) => updateEdit("residenceAddress", event.target.value)} /></Field>
             <Field label="Teléfono"><input type="tel" inputMode="tel" placeholder="0000 0000" value={editForm.phone} onChange={(event) => updateEdit("phone", formatGuatemalaPhone(event.target.value))} /></Field>
             <Field label="Celular"><input type="tel" inputMode="tel" placeholder="0000 0000" value={editForm.mobilePhone} onChange={(event) => updateEdit("mobilePhone", formatGuatemalaPhone(event.target.value))} /></Field>
@@ -671,25 +645,14 @@ export function ClientDetailPage() {
             <Field label="Ingresos declarados"><input type="number" min="0" step="0.01" value={editForm.salaryAmount} onChange={(event) => updateEdit("salaryAmount", event.target.value)} /></Field>
             <Field label="Frecuencia"><Select value={editForm.salaryFrequency} onChange={(event) => updateEdit("salaryFrequency", event.target.value)}><option value="Mensual">Mensual</option><option value="Quincenal">Quincenal</option><option value="Semanal">Semanal</option><option value="Diaria">Diaria</option></Select></Field>
             <Field label="Cantidad de hijos"><input type="number" min="0" value={editForm.childrenCount} onChange={(event) => updateEdit("childrenCount", event.target.value)} /></Field>
-          </WizardStep>
-        ) : null}
-        {editStep === 2 ? (
-          <WizardStep title="Datos de recepción" description="Motivo de atención y datos de la persona reclamada.">
+        </div>
+        <div className="form-grid">
             <Field label="Asistencia solicitada" wide><Select value={editForm.assistanceRequested} onChange={(event) => updateEdit("assistanceRequested", event.target.value)}>{processTypes.data?.filter((item) => item.isActive).map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}</Select></Field>
             <Field label="Persona contra quien reclama"><input value={editForm.claimedAgainstPersonName} onChange={(event) => updateEdit("claimedAgainstPersonName", event.target.value)} /></Field>
             <Field label="Dirección de la persona reclamada"><textarea value={editForm.claimedAgainstPersonAddress} onChange={(event) => updateEdit("claimedAgainstPersonAddress", event.target.value)} /></Field>
             <Field label="Lugar de recepción"><input value={editForm.receptionPlace} onChange={(event) => updateEdit("receptionPlace", event.target.value)} /></Field>
             <AppDatePicker label="Fecha de recepción" value={editForm.receptionDate} onChange={(value) => updateEdit("receptionDate", value)} preset="processDate" required />
-          </WizardStep>
-        ) : null}
-        {editStep === 3 ? (
-          <WizardStep title="Confirmar cambios" description="Revise los datos principales antes de guardar.">
-            <div className="wizard-review field--wide">
-              <section className="wizard-review__group"><h3>Identidad</h3><div className="wizard-review__grid"><ReadOnlyValue label="Nombre" value={editForm.fullName} /><ReadOnlyValue label="DPI" value={editForm.dpi} /><ReadOnlyValue label="Nacimiento" value={editForm.birthDate || "No registrado"} /><ReadOnlyValue label="Estado civil" value={editForm.maritalStatus || "No registrado"} /></div></section>
-              <section className="wizard-review__group"><h3>Recepción</h3><div className="wizard-review__grid"><ReadOnlyValue label="Asistencia" value={editForm.assistanceRequested} /><ReadOnlyValue label="Fecha" value={editForm.receptionDate} /><ReadOnlyValue label="Lugar" value={editForm.receptionPlace} /><ReadOnlyValue label="Contacto" value={editForm.mobilePhone || editForm.phone || "No registrado"} /></div></section>
-            </div>
-          </WizardStep>
-        ) : null}
+        </div>
       </Modal>
       <Modal
         size="lg"

@@ -2,8 +2,9 @@
 
 ## Acceso y alcance
 
-- Aplicación: https://bufete-umg-demo.vercel.app/acceso
-- Manual: https://bufete-umg-demo.vercel.app/manual-demo.pdf
+- Aplicación: https://bufete-popular-umg.vercel.app/acceso
+- Manual: https://bufete-popular-umg.vercel.app/manual.pdf
+- Alias anterior conservado: https://bufete-umg-demo.vercel.app/acceso.
 - Proyecto Vercel independiente: `bufete-umg-demo`.
 - PostgreSQL independiente: `bufete-umg-demo-db` (Neon).
 - Archivos privados independientes: `bufete-umg-demo-files` (Vercel Blob).
@@ -25,7 +26,13 @@ La conexión Git está deshabilitada para despliegues automáticos mediante `ver
 
 `scripts/seed-demo.mjs` prepara ejemplos ficticios en Petén. `scripts/sync-demo-catalogs.mjs` proyecta los catálogos vigentes desde el inicializador .NET; no establece nuevos requisitos jurídicos.
 
-El manual se genera con `scripts/build-demo-manual.py` y se verifica visualmente con `scripts/render-demo-manual.py`. El PDF publicado es `frontend/public/manual-demo.pdf`.
+El manual se genera con `scripts/build-demo-manual.py` y se verifica visualmente con `scripts/render-demo-manual.py`. El PDF publicado es `frontend/public/manual.pdf`; `manual-demo.pdf` conserva compatibilidad con enlaces anteriores.
+
+## Presentación institucional · 13 de octubre de 2026
+
+El sitio utiliza identidad institucional en acceso, sede, informes y manual, sin etiquetas de demo. El nombre interno del proyecto, variables, tablas y adaptador se conservan para no romper la persistencia. Este cambio de presentación no migra el backend a .NET ni acredita aceptación institucional, alta disponibilidad o preparación para expedientes reales. Permanecen las restricciones funcionales descritas abajo.
+
+El script `start-scanner-agent.ps1` autoriza por defecto los dos dominios publicados. `SCANNER_ALLOWED_ORIGINS` permite especificar otros orígenes exactos. El agente continúa limitado a loopback. El inicio automático y la provisión de estaciones siguen pendientes; un despliegue Vercel no instala software en Windows.
 
 ## Administración de sedes
 

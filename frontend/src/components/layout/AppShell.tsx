@@ -2,6 +2,7 @@ import {
   Activity,
   Bell,
   BookOpenCheck,
+  Building2,
   ChevronDown,
   ChevronRight,
   ClipboardList,
@@ -41,7 +42,8 @@ import { NavLink, useLocation, useNavigate } from "../../routing/navigation";
 import { useAuth } from "../../context/AuthContext";
 import { dataSource } from "../../data/dataSource";
 import { demoEnabled } from "../../demo/client";
-import { WorkspaceBanner } from "../../demo/WorkspaceBanner";
+import { WorkspaceContext } from "../../demo/WorkspaceContext";
+import { practiceNotices, type PracticeNotice } from "../../data/practiceNotices";
 import { useAsyncData } from "../../hooks/useAsyncData";
 import type { SearchResult } from "../../types/domain";
 import { translate } from "../../utils/format";
@@ -59,6 +61,11 @@ interface NavigationItem {
   icon: LucideIcon;
   end?: boolean;
   permissions: string[];
+  platformOnly?: boolean;
+  seatOnly?: boolean;
+  administratorOnly?: boolean;
+  nativeOnly?: boolean;
+  hideForStudent?: boolean;
 }
 
 interface NavigationGroup {
@@ -70,6 +77,7 @@ interface NavigationGroup {
 
 const fluentNavigationIcons = new Map([
   [LayoutDashboard, Home20Regular], [ShieldCheck, Shield20Regular],
+  [Building2, Building20Regular],
   [FolderKanban, Folder20Regular], [UsersRound, People20Regular],
   [FileStack, DocumentCopy20Regular], [BookOpenCheck, Book20Regular],
   [Activity, Pulse20Regular], [ClipboardList, TaskListSquareLtr20Regular],
@@ -84,6 +92,13 @@ function NavigationIcon({ icon: Icon, fluent, size = 20 }: { icon: LucideIcon; f
 
 const navigationGroups: NavigationGroup[] = [
   {
+    id: 'platform', label: 'Administración global', icon: Building2,
+    items: [
+      { to: '/sedes', label: 'Bufetes y sedes', description: 'Crear y administrar sedes', icon: Building2, permissions: [], platformOnly: true },
+      { to: '/vetos', label: 'Lista negra global', description: 'Atención bloqueada por DPI', icon: ShieldCheck, permissions: ['clients.write'], platformOnly: true },
+    ],
+  },
+  {
     id: "legal",
     label: "Gestión jurídica",
     icon: FolderKanban,
@@ -97,7 +112,7 @@ const navigationGroups: NavigationGroup[] = [
       },
       {
         to: "/personas/clientes",
-        label: "Usuarios",
+        label: "Usuarios atendidos",
         description: "Atención y papelería",
         icon: UsersRound,
         permissions: ["clients.read"],
@@ -108,6 +123,7 @@ const navigationGroups: NavigationGroup[] = [
         description: "Documentos y escáner",
         icon: FileStack,
         permissions: ["documents.read"],
+        hideForStudent: true,
       },
     ],
   },
@@ -122,6 +138,13 @@ const navigationGroups: NavigationGroup[] = [
         description: "Inscripción y casos",
         icon: BookOpenCheck,
         permissions: ["students.read", "students.self.read"],
+      },
+      {
+        to: "/personas/alumnos/cierre-practica",
+        label: "Cierre de práctica",
+        description: "Alumnos que finalizaron",
+        icon: ClipboardList,
+        permissions: ["students.read"],
       },
     ],
   },
@@ -148,7 +171,7 @@ const navigationGroups: NavigationGroup[] = [
   },
   {
     id: "administration",
-    label: "Administración",
+    label: "Administración de sede",
     icon: Settings2,
     items: [
       {
@@ -165,6 +188,15 @@ const navigationGroups: NavigationGroup[] = [
         icon: Settings2,
         permissions: ["catalogs.manage"],
       },
+      {
+        to: '/vetos', label: 'Lista negra', description: 'Emitidos por esta sede', icon: ShieldCheck,
+        permissions: ['clients.write'], administratorOnly: true, seatOnly: true,
+      },
+    ],
+  },
+  {
+    id: 'governance', label: 'Control y trazabilidad', icon: ShieldCheck,
+    items: [
       {
         to: "/auditoria",
         label: "Auditoría",
@@ -192,18 +224,24 @@ const navigationGroups: NavigationGroup[] = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [workspaceName,setWorkspaceName]=useState('Verificando sede…');
+  const [workspacePlatformAdmin,setWorkspacePlatformAdmin]=useState(false);
   const pageRef = useRef<HTMLElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [noticesOpen, setNoticesOpen] = useState(false);
+  const [notices, setNotices] = useState<PracticeNotice[]>([]);
+  const [noticesError, setNoticesError] = useState('');
+  const sounding = useRef(new Set<string>());
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [openGroups, setOpenGroups] = useState(
     () => new Set(navigationGroups.map((group) => group.id)),
   );
   const { user, logout } = useAuth();
-  const isAdminCenter = !demoEnabled && Boolean(user?.isPlatformAdmin);
+  const navigate = useNavigate();
+  const isAdminCenter = demoEnabled ? workspacePlatformAdmin : Boolean(user?.isPlatformAdmin);
   const location = useLocation();
-  const breadcrumb = getBreadcrumb(location.pathname);
+  const breadcrumb = getBreadcrumb(location.pathname, isAdminCenter);
   const hasAnyPermission = (permissions: string[]) =>
     Boolean(
       user?.permissions.includes("*") ||
@@ -211,17 +249,66 @@ export function AppShell({ children }: { children: ReactNode }) {
           user?.permissions.includes(permission),
         ),
     );
-  const visibleGroups = navigationGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) => hasAnyPermission(item.permissions)),
-    }))
-    .filter((group) => group.items.length > 0);
-  const canAdministerUsers = hasAnyPermission(["users.read"]);
   const isStudent =
     hasAnyPermission(["cases.assigned.read"]) &&
     !hasAnyPermission(["cases.read"]);
+  const visibleGroups = navigationGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) =>
+        (!item.nativeOnly || !demoEnabled) &&
+        (!item.platformOnly || isAdminCenter) &&
+        (!item.seatOnly || !isAdminCenter) &&
+        (!item.administratorOnly || user?.roles.includes('Administrador') || (demoEnabled && user?.roles.includes('AdministradorGeneral'))) &&
+        (!item.hideForStudent || !isStudent) &&
+        (item.platformOnly ? isAdminCenter : hasAnyPermission(item.permissions))),
+    }))
+    .filter((group) => group.items.length > 0);
+  const canAdministerUsers = hasAnyPermission(["users.read"]);
   const canGlobalSearch = hasAnyPermission(["clients.read"]);
+  const canReadPracticeNotices = hasAnyPermission(["students.read"]);
+  const unreadNotices = notices.filter((notice) => !notice.isRead).length;
+  const soundNotice = async (notice: PracticeNotice) => {
+    if (sounding.current.has(notice.id)) return;
+    sounding.current.add(notice.id);
+    try {
+      const audio = new AudioContext();
+      let timeout: number | undefined;
+      const resumed = await Promise.race([
+        audio.resume().then(() => true),
+        new Promise<false>((resolve) => { timeout = window.setTimeout(() => resolve(false), 1500); }),
+      ]);
+      if (timeout !== undefined) window.clearTimeout(timeout);
+      if (!resumed || audio.state !== 'running') { await audio.close(); sounding.current.delete(notice.id); return; }
+      const oscillator = audio.createOscillator(), gain = audio.createGain();
+      oscillator.type = 'sine'; oscillator.frequency.value = 660;
+      gain.gain.setValueAtTime(0.04, audio.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.24);
+      oscillator.connect(gain); gain.connect(audio.destination);
+      oscillator.start(); oscillator.stop(audio.currentTime + 0.24);
+      oscillator.onended = () => { void audio.close(); };
+      await practiceNotices.sounded(notice.id);
+      setNotices((current) => current.map((item) => item.id === notice.id ? { ...item, isSounded: true } : item));
+    } catch { sounding.current.delete(notice.id); }
+  };
+  useEffect(() => {
+    if (!canReadPracticeNotices) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const rows = await practiceNotices.list();
+        if (!active) return;
+        setNotices(rows);
+        setNoticesError('');
+        const next = rows.find((notice) => !notice.isRead && !notice.isSounded && !sounding.current.has(notice.id));
+        if (!next) return;
+        void soundNotice(next);
+      } catch (reason) { if (active) setNoticesError(reason instanceof Error ? reason.message : 'No se pudieron consultar las notificaciones.'); }
+    };
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 60_000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, [canReadPracticeNotices]);
   const [platformStatus, setPlatformStatus] = useState<
     "checking" | "available" | "unavailable"
   >(dataSource.mode === "mock" ? "available" : "checking");
@@ -325,9 +412,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             </IconButton>
           </div>
           <nav className="sidebar-nav" id="workspace-navigation">
-            <span className="sidebar-nav__eyebrow">ESPACIO DE TRABAJO</span>
-            {!demoEnabled && user?.roles.includes('Administrador') && <NavLink to="/vetos" title="Vetos de atención" aria-label="Vetos de atención" className={({ isActive }) => `sidebar-home ${isActive ? 'active' : ''}`}><span><ShieldCheck size={20} /></span><span><strong>Vetos de atención</strong><small>Control global por DPI</small></span></NavLink>}
-            {isAdminCenter && <NavLink to="/sedes" title="Administración de sedes" aria-label="Administración de sedes" className={({ isActive }) => `sidebar-home ${isActive ? "active" : ""}`}><span><Building20Regular aria-hidden="true" /></span><span><strong>Administración de sedes</strong><small>Superusuario</small></span></NavLink>}
+            {visibleGroups.filter(group => group.id === 'platform').map(group => <SidebarGroup key={group.id} group={group} expanded={openGroups.has(group.id)} fluent={true} pathname={location.pathname} onToggle={toggleGroup} />)}
+            <div className="sidebar-seat-context" aria-label="Contexto de sede">
+              <span>{isAdminCenter ? 'Operación de sede' : 'Mi sede'}</span>
+              <strong title={demoEnabled ? workspaceName : user?.tenantName ?? 'Petén'}>{demoEnabled ? workspaceName : user?.tenantName ?? 'Petén'}</strong>
+              <small>Registros y personal de este espacio</small>
+            </div>
             <NavLink
               to={isStudent ? "/expedientes" : "/"}
               end
@@ -338,7 +428,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               }
             >
               <span>
-                <NavigationIcon icon={LayoutDashboard} fluent={isAdminCenter} size={19} />
+                <NavigationIcon icon={LayoutDashboard} fluent={true} size={19} />
               </span>
               <span>
                 <strong>{isStudent ? "Mis casos" : "Resumen operativo"}</strong>
@@ -349,46 +439,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </small>
               </span>
             </NavLink>
-            {visibleGroups.map((group) => {
-              const expanded = openGroups.has(group.id);
-              const groupActive = group.items.some(
-                (item) =>
-                  location.pathname === item.to ||
-                  location.pathname.startsWith(`${item.to}/`),
-              );
-              const GroupIcon = group.icon;
-              return (
-                <div
-                  className={`nav-group ${groupActive ? "nav-group--active" : ""}`}
-                  key={group.id}
-                >
-                  <button
-                    type="button"
-                    className="nav-group__trigger"
-                    onClick={() => toggleGroup(group.id)}
-                    aria-expanded={expanded}
-                    aria-controls={`nav-group-${group.id}`}
-                  >
-                    <span>
-                      <NavigationIcon icon={GroupIcon} fluent={isAdminCenter} size={18} />
-                    </span>
-                    <strong>{group.label}</strong>
-                    <ChevronDown
-                      className={expanded ? "expanded" : ""}
-                      size={16}
-                    />
-                  </button>
-                  <div
-                    className={`nav-group__items ${expanded ? "expanded" : ""}`}
-                    id={`nav-group-${group.id}`}
-                  >
-                    {group.items.map((item) => (
-                      <SidebarLink key={item.to} item={item} fluent={isAdminCenter} />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+            {visibleGroups.filter(group => group.id !== 'platform').map(group => <SidebarGroup key={group.id} group={group} expanded={openGroups.has(group.id)} fluent={true} pathname={location.pathname} onToggle={toggleGroup} />)}
           </nav>
           <div className="sidebar-footer">
             <span
@@ -457,10 +508,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div />
           )}
           <div className="topbar__actions">
-            <IconButton label="Notificaciones" className="notification-button">
+            {canReadPracticeNotices && <div className="notification-wrap"><IconButton label={`Notificaciones${unreadNotices ? `, ${unreadNotices} nuevas` : ''}`} className="notification-button" onClick={() => { setNoticesOpen((open) => !open); const next = notices.find((notice) => !notice.isRead && !notice.isSounded); if (next) void soundNotice(next); }}>
               <Bell size={20} />
-              <span className="notification-dot" />
-            </IconButton>
+              {unreadNotices > 0 && <span className="notification-count">{unreadNotices > 99 ? '99+' : unreadNotices}</span>}
+            </IconButton>{noticesOpen && <div className="notification-panel" role="region" aria-label="Notificaciones de práctica"><strong>Próximos cierres de práctica</strong>{noticesError && <p role="alert">{noticesError}</p>}{!noticesError && notices.length === 0 && <p>Sin avisos pendientes.</p>}{notices.map((notice) => <button type="button" key={notice.id} className={notice.isRead ? 'notification-item is-read' : 'notification-item'} onClick={async () => { try { await practiceNotices.read(notice.id); setNotices((current) => current.map((item) => item.id === notice.id ? { ...item, isRead: true } : item)); setNoticesOpen(false); navigate(`/personas/alumnos/${notice.studentId}`); } catch (reason) { setNoticesError(reason instanceof Error ? reason.message : 'No se pudo abrir el aviso.'); } }}><span>{notice.studentName}</span><small>La práctica finaliza el {notice.endDate}. {notice.daysRemaining === 0 ? 'Hoy es el último día.' : `Faltan ${notice.daysRemaining} días.`}</small></button>)}</div>}</div>}
             <button
               className="profile-trigger"
               type="button"
@@ -516,7 +567,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
         <main className="page-content" ref={pageRef}>
-          {demoEnabled && <WorkspaceBanner onWorkspaceName={setWorkspaceName} />}
+          {demoEnabled && <WorkspaceContext onWorkspaceName={setWorkspaceName} onPlatformAdmin={setWorkspacePlatformAdmin} />}
           {children}
         </main>
         {canGlobalSearch && (
@@ -528,6 +579,18 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
     </div>
   );
+}
+
+function SidebarGroup({ group, expanded, fluent, pathname, onToggle }: { group: NavigationGroup; expanded: boolean; fluent: boolean; pathname: string; onToggle: (id: string) => void }) {
+  const active = group.items.some(item => pathname === item.to || pathname.startsWith(`${item.to}/`));
+  return <div className={`nav-group ${active ? 'nav-group--active' : ''}`} data-module={group.id}>
+    <button type="button" className="nav-group__trigger" onClick={() => onToggle(group.id)} aria-expanded={expanded} aria-controls={`nav-group-${group.id}`}>
+      <span><NavigationIcon icon={group.icon} fluent={fluent} size={18} /></span><strong>{group.label}</strong><ChevronDown className={expanded ? 'expanded' : ''} size={16} />
+    </button>
+    <div className={`nav-group__items ${expanded ? 'expanded' : ''}`} id={`nav-group-${group.id}`}>
+      {group.items.map(item => <SidebarLink key={item.to} item={item} fluent={fluent} />)}
+    </div>
+  </div>;
 }
 
 function SidebarLink({ item, fluent = false }: { item: NavigationItem; fluent?: boolean }) {
@@ -551,7 +614,7 @@ function SidebarLink({ item, fluent = false }: { item: NavigationItem; fluent?: 
   );
 }
 
-function getBreadcrumb(pathname: string) {
+function getBreadcrumb(pathname: string, platform = false) {
   if (pathname === "/") return { section: "Inicio", page: "Resumen operativo" };
   if (pathname.startsWith("/expedientes/"))
     return {
@@ -575,15 +638,16 @@ function getBreadcrumb(pathname: string) {
   if (pathname === "/personas/alumnos")
     return { section: "Práctica académica", page: "Alumnos" };
   const known: Record<string, { section: string; page: string }> = {
-    "/sedes": { section: "Administración de plataforma", page: "Bufetes y sedes" },
+    "/sedes": { section: "Administración global", page: "Bufetes y sedes" },
+    "/vetos": { section: platform ? 'Administración global' : 'Administración de sede', page: platform ? 'Lista negra global' : 'Lista negra' },
     "/documentos": { section: "Gestión jurídica", page: "Archivo digital" },
     "/actividades": { section: "Operación interna", page: "Actividades" },
     "/reportes": { section: "Operación interna", page: "Reportes" },
-    "/usuarios": { section: "Administración", page: "Accesos y personal" },
-    "/catalogos": { section: "Administración", page: "Catálogos" },
-    "/auditoria": { section: "Administración", page: "Auditoría" },
-    "/eliminados": { section: "Administración", page: "Eliminados" },
-    "/retencion": { section: "Administración", page: "Retención y depuración" },
+    "/usuarios": { section: "Administración de sede", page: "Accesos y personal" },
+    "/catalogos": { section: "Administración de sede", page: "Catálogos" },
+    "/auditoria": { section: "Control y trazabilidad", page: "Auditoría" },
+    "/eliminados": { section: "Control y trazabilidad", page: "Eliminados" },
+    "/retencion": { section: "Control y trazabilidad", page: "Retención y depuración" },
     "/mi-cuenta": { section: "Cuenta", page: "Mi perfil y seguridad" },
   };
   return (

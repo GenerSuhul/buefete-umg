@@ -14,6 +14,7 @@ import type {
   WeeklyReport,
 } from "../types/domain";
 import catalogs from "./catalogs.json";
+import type { StudentLegalStudy } from '../types/studentLegalStudy';
 
 export const id = () => crypto.randomUUID();
 export const now = () => new Date().toISOString();
@@ -22,6 +23,7 @@ export interface DemoState {
   version: 1;
   clients: ClientProfile[];
   students: StudentProfile[];
+  studentLegalStudies?: Record<string, StudentLegalStudy>;
   cases: CaseDetail[];
   users: UserSummary[];
   passwords: Record<string, string>;
@@ -84,7 +86,7 @@ export const roles: Role[] = [
 ];
 export function emptyState(
   adminEmail: string,
-  name = "Licenciado Demo",
+  name = "Administrador de plataforma",
 ): DemoState {
   return {
     version: 1,
@@ -118,6 +120,18 @@ export function emptyState(
     deleted: [],
     audit: [],
   };
+}
+export function normalizeInstitutionalProfile(state: DemoState): boolean {
+  const root = state.users.find((user) => user.id === rootId);
+  if (!root || root.fullName !== "Licenciado Demo") return false;
+  root.fullName = "Administrador de plataforma";
+  state.audit.unshift({
+    id: id(), userId: rootId, username: "sistema", occurredAtUtc: now(),
+    action: "ProfileNameUpdated", entityType: "User", entityId: rootId,
+    changesJson: JSON.stringify({ fullName: { before: "Licenciado Demo", after: root.fullName } }),
+    traceId: id(), ipAddress: null,
+  });
+  return true;
 }
 export function requireValue<T>(
   value: T | null | undefined,

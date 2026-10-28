@@ -44,3 +44,8 @@ tmp/
 frontend/.agents/
 frontend/skills-lock.json
 output/
+
+# Disposable QA builds and unrelated validation workspace
+**/.next-*/
+**/.qa-build/
+.validate-cafeteria/

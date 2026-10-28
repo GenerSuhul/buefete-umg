@@ -51,8 +51,7 @@ const emptyForm = {
   birthDate: "",
   studentCardNumber: "",
   dpi: "",
-  semester: "9",
-  studyShift: "Matutina",
+  studyShift: "Entre semana",
   practiceShift: "Matutina",
   residenceAddress: "",
   mobilePhone: "",
@@ -63,7 +62,6 @@ const emptyForm = {
   immediateSupervisor: "",
   jobTitle: "",
   modality: "CivilFamilyCases",
-  initialStatus: "Submitted",
   siteName: "Bufete Popular UMG",
   siteAddress: "",
   practiceDays: "",
@@ -74,6 +72,7 @@ const emptyForm = {
   endDate: "",
   password: "",
   confirmPassword: "",
+  giveAccess: false,
 };
 type StudentForm = typeof emptyForm;
 
@@ -178,12 +177,11 @@ export function StudentsPage() {
       (!form.fullName.trim() ||
         !form.birthDate ||
         !form.studentCardNumber.trim() ||
-        !form.dpi.trim() ||
-        !form.email.trim())
+        !form.dpi.trim())
     )
-      return "Nombre, fecha de nacimiento, carné, DPI y correo son obligatorios.";
-    if (target === 0 && !/^\S+@\S+\.\S+$/.test(form.email.trim()))
-      return "Ingrese un correo electrónico válido; será la identidad de acceso.";
+      return "Nombre, fecha de nacimiento, carné y DPI son obligatorios.";
+    if (target === 0 && form.email.trim() && !/^\S+@\S+\.\S+$/.test(form.email.trim()))
+      return "Ingrese un correo electrónico válido.";
     if (target === 0 && !isCompleteCui(form.dpi))
       return "El DPI debe contener los 13 dígitos del CUI.";
     if (target === 1 && !form.residenceAddress.trim())
@@ -192,9 +190,9 @@ export function StudentsPage() {
       return "Los teléfonos deben contener 8 dígitos o el prefijo +502 seguido de 8 dígitos.";
     if (
       target === 2 &&
-      (!form.registrationDate || !form.modality || !form.initialStatus)
+      (!form.registrationDate || !form.modality)
     )
-      return "Fecha, modalidad y estado inicial son obligatorios.";
+      return "Fecha y modalidad son obligatorias.";
     if (
       target === 2 &&
       form.startTime &&
@@ -202,9 +200,15 @@ export function StudentsPage() {
       form.startTime >= form.endTime
     )
       return "La hora de finalización debe ser posterior a la hora de inicio.";
-    if (target === 4 && !isValidPassword(form.password))
+    if (target === 3) {
+      const missing = studentDocumentFields.slice(0, -1).filter(field => !documentFiles[field.key]);
+      if (missing.length) return `Adjunte todos los documentos obligatorios antes de inscribir: ${missing.map(field => field.label).join(', ')}.`;
+    }
+    if (target === 4 && form.giveAccess && !form.email.trim())
+      return "Registre un correo electrónico para dar acceso al alumno.";
+    if (target === 4 && form.giveAccess && !isValidPassword(form.password))
       return "La contraseña temporal debe tener entre 8 y 128 caracteres.";
-    if (target === 4 && !form.confirmPassword)
+    if (target === 4 && form.giveAccess && !form.confirmPassword)
       return "Confirme la contraseña temporal.";
     if (target === 4 && passwordMismatch)
       return "La confirmación de la contraseña no coincide.";
@@ -240,7 +244,7 @@ export function StudentsPage() {
           ageAtRegistration: null,
           studentCardNumber: form.studentCardNumber.trim(),
           dpi: form.dpi.trim(),
-          semester: Number(form.semester),
+          semester: null,
           studyShift: form.studyShift,
           workplace: form.workplace.trim() || null,
           workPhone: form.workPhone.trim() || null,
@@ -254,9 +258,9 @@ export function StudentsPage() {
         },
         enrollment: {
           modality: form.modality,
-          initialStatus: form.initialStatus,
+          initialStatus: "Draft",
           siteName: form.siteName.trim() || null,
-          siteAddress: form.siteAddress.trim() || null,
+          siteAddress: form.modality === 'CivilFamilyCases' ? null : form.siteAddress.trim() || null,
           shift: form.practiceShift,
           practiceDays: form.practiceDays.trim() || null,
           startTime: form.startTime || null,
@@ -264,14 +268,14 @@ export function StudentsPage() {
           startDate: form.startDate || null,
           endDate: form.endDate || null,
         },
-        access: {
+        access: form.giveAccess ? {
           password: form.password,
           participationStartDate: form.startDate || form.registrationDate,
           participationEndDate: form.endDate || null,
-        },
+        } : null,
       }));
       try {
-      if (profilePhoto) await dataSource.setUserPhoto(registration.access.userAccountId, profilePhoto);
+      if (profilePhoto && registration.access) await dataSource.setUserPhoto(registration.access.userAccountId, profilePhoto);
       await Promise.all(
         studentDocumentFields.map(async (field) => {
           const file = documentFiles[field.key];
@@ -300,15 +304,15 @@ export function StudentsPage() {
         }),
       );
       } catch (reason) {
-        notify.warning({ title: 'Alumno creado; adjuntos pendientes', message: 'El perfil y la inscripción ya existen. Complete los adjuntos desde Papelería o Editar perfil; no repita la inscripción.', duration: 12000 });
+        notify.warning({ title: 'Alumno registrado; adjuntos pendientes', message: 'El perfil y la solicitud en borrador ya existen. Complete los adjuntos desde el detalle; no repita el registro.', duration: 12000 });
         setNewOpen(false);
         navigate(`/personas/alumnos/${registration.student.id}`);
         throw new Error(`La inscripción fue guardada, pero quedaron adjuntos pendientes: ${reason instanceof Error ? reason.message : 'revise la conexión'}`);
       }
         return registration;
       })(), {
-        loading: { title: "Inscribiendo alumno…", message: "Se está creando el perfil, el acceso y la papelería seleccionada." },
-        success: { title: "Alumno inscrito", message: `${form.fullName.trim()} fue registrado con su acceso académico.` },
+        loading: { title: "Registrando alumno…", message: "Se está guardando el perfil y la papelería seleccionada." },
+        success: { title: "Alumno registrado", message: `${form.fullName.trim()} quedó pendiente de revisión documental.` },
         error: { title: "No se completaron todos los pasos" },
       });
       setNewOpen(false);
@@ -419,7 +423,6 @@ export function StudentsPage() {
                     <span>
                       <strong>{student.fullName}</strong>
                       <small>
-                        {student.semester ?? "—"}.º semestre ·{" "}
                         {student.studyShift ?? "Sin jornada"}
                       </small>
                     </span>
@@ -511,29 +514,19 @@ export function StudentsPage() {
                 onChange={(event) => update("dpi", formatCui(event.target.value))}
               />
             </Field>
-            <Field label="Semestre">
-              <Select
-                value={form.semester}
-                onChange={(event) => update("semester", event.target.value)}
-              >
-                <option value="8">8.º</option>
-                <option value="9">9.º</option>
-                <option value="10">10.º</option>
-              </Select>
-            </Field>
             <Field label="Jornada de estudio">
               <Select
                 value={form.studyShift}
                 onChange={(event) => update("studyShift", event.target.value)}
               >
-                <option>Matutina</option>
-                <option>Vespertina</option>
-                <option>Nocturna</option>
+                <option>Entre semana</option>
+                <option>Sábado</option>
+                <option>Domingo</option>
               </Select>
             </Field>
             <Field
               label="Correo electrónico"
-              hint="También se utilizará para iniciar sesión."
+              hint="Opcional. Se requiere únicamente si se habilita acceso al sistema."
               wide
             >
               <input
@@ -626,20 +619,6 @@ export function StudentsPage() {
                 </option>
               </Select>
             </Field>
-            <Field
-              label="Registro inicial"
-              hint="Presentada: papelería recibida, pendiente de revisión. Use Borrador sólo si el registro aún está incompleto."
-            >
-              <Select
-                value={form.initialStatus}
-                onChange={(event) =>
-                  update("initialStatus", event.target.value)
-                }
-              >
-                <option value="Draft">Borrador</option>
-                <option value="Submitted">Presentada</option>
-              </Select>
-            </Field>
             <AppDatePicker
               label="Fecha de inscripción"
               preset="processDate"
@@ -655,12 +634,12 @@ export function StudentsPage() {
                 onChange={(event) => update("siteName", event.target.value)}
               />
             </Field>}
-            <Field label="Dirección del lugar de práctica" wide>
+            {form.modality !== 'CivilFamilyCases' && <Field label="Dirección del lugar de práctica" wide>
               <textarea
                 value={form.siteAddress}
                 onChange={(event) => update("siteAddress", event.target.value)}
               />
-            </Field>
+            </Field>}
             <Field label="Días de práctica">
               <input
                 value={form.practiceDays}
@@ -690,7 +669,7 @@ export function StudentsPage() {
         {step === 3 && (
           <WizardStep
             title="Documentos de inscripción"
-            description="Adjunte los documentos disponibles."
+            description="Adjunte todos los documentos obligatorios antes de inscribir al alumno."
           >
             {studentDocumentFields.map((field) => (
               <EnrollmentDocumentPicker
@@ -707,7 +686,7 @@ export function StudentsPage() {
               />
             ))}
             <p className="wizard-inline-note">
-              Los documentos sin adjuntar se marcarán como pendientes.
+              La inscripción requiere los documentos obligatorios; la constancia de pensum cerrado aplica cuando corresponda.
             </p>
           </WizardStep>
         )}
@@ -716,16 +695,12 @@ export function StudentsPage() {
             title="Acceso y confirmación"
             description="Revise la inscripción y confirme el acceso."
           >
-            <ReadOnlyValue
-              label="Correo de acceso"
-              value={form.email}
-              hint="Credencial para iniciar sesión."
-            />
-            <ReadOnlyValue
-              label="Rol"
-              value="Alumno"
-              hint="Consulta de perfil y casos asignados."
-            />
+            <Field label="Dar acceso al sistema">
+              <input type="checkbox" checked={form.giveAccess} onChange={(event) => update("giveAccess", event.target.checked)} />
+            </Field>
+            {form.giveAccess && <>
+              <ReadOnlyValue label="Correo de acceso" value={form.email || "Registre un correo"} />
+              <ReadOnlyValue label="Rol" value="Alumno" />
             <Field label="Contraseña temporal">
               <input
                 type="password"
@@ -735,6 +710,7 @@ export function StudentsPage() {
                 placeholder="Mínimo 8 caracteres"
               />
             </Field>
+            </>}
             <Field label="Confirmar contraseña">
               <input
                 type="password"
@@ -754,10 +730,7 @@ export function StudentsPage() {
                 <div className="wizard-review__grid">
                   <ReadOnlyValue label="Alumno" value={form.fullName} />
                   <ReadOnlyValue label="Carné" value={form.studentCardNumber} />
-                  <ReadOnlyValue
-                    label="Semestre y jornada"
-                    value={`${form.semester}.º · ${form.studyShift}`}
-                  />
+                  <ReadOnlyValue label="Jornada" value={form.studyShift} />
                   <ReadOnlyValue
                     label="Registro"
                     value={formatDate(form.registrationDate)}
@@ -770,12 +743,7 @@ export function StudentsPage() {
                 </h4>
                 <div className="wizard-review__grid">
                   <ReadOnlyValue label="Modalidad" value={modalityLabel} />
-                  <ReadOnlyValue
-                    label="Estado inicial"
-                    value={
-                      form.initialStatus === "Draft" ? "Borrador" : "Presentada"
-                    }
-                  />
+                  <ReadOnlyValue label="Estado inicial" value="Pendiente de revisión documental" />
                   <ReadOnlyValue label="Lugar" value={form.siteName} />
                   <ReadOnlyValue
                     label="Horario"
@@ -796,16 +764,16 @@ export function StudentsPage() {
                     label="Documentos adjuntos"
                     value={`${selectedDocumentCount} de ${studentDocumentFields.length} requisitos`}
                   />
-                  <ReadOnlyValue label="Acceso" value="Activo · Alumno" />
+                  <ReadOnlyValue label="Acceso" value={form.giveAccess ? "Se habilitará" : "Sin acceso"} />
                 </div>
               </section>
-              <div className="access-assurance">
+              {form.giveAccess && <div className="access-assurance">
                 <UserRoundCheck size={19} />
                 <div>
                   <strong>Acceso del alumno</strong>
                   <p>Consulta de perfil y casos asignados.</p>
                 </div>
-              </div>
+              </div>}
             </div>
           </WizardStep>
         )}

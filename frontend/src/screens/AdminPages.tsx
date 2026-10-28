@@ -1,3 +1,4 @@
+import { validateRequirement } from '../utils/catalogValidation';
 import {
   ArchiveRestore,
   Ban,
@@ -634,12 +635,14 @@ export function RetentionPage() {
 }
 
 export function CatalogsPage() {
+  const confirm = useConfirm();
+  const notify = useNotify();
   const emptyProcess = { code: "", name: "", description: "", isActive: true };
   const emptyRequirement: Omit<
     RequirementDefinition,
     "id" | "maximumAgeDays"
   > & { maximumAgeDays: string } = {
-    scope: "LegalProcess",
+    scope: "Process",
     processTypeId: null,
     code: "",
     label: "",
@@ -713,7 +716,7 @@ export function CatalogsPage() {
     setRequirementForm(
       item
         ? {
-            scope: item.scope,
+            scope: "Process",
             processTypeId: item.processTypeId,
             code: item.code,
             label: item.label,
@@ -738,6 +741,8 @@ export function CatalogsPage() {
     setRequirementOpen(true);
   };
   const saveRequirement = async () => {
+    const validation = validateRequirement(requirementForm);
+    if (validation) { setFormError(validation); return; }
     setBusy(true);
     setFormError("");
     const payload = {
@@ -761,6 +766,26 @@ export function CatalogsPage() {
           ? reason.message
           : "No se pudo guardar el requisito.",
       );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const removeRequirement = async (item: RequirementDefinition) => {
+    const approved = await confirm({
+      title: "Quitar requisito del catálogo",
+      message: `«${item.label}» dejará de exigirse en expedientes nuevos. Los expedientes que ya lo tienen conservarán su historial.`,
+      confirmLabel: "Quitar requisito",
+      tone: "danger",
+    });
+    if (!approved) return;
+    setBusy(true);
+    try {
+      const { id: _id, ...payload } = item;
+      await dataSource.updateRequirement(item.id, { ...payload, isActive: false });
+      await reload();
+      notify.success({ title: "Requisito retirado", message: "Ya no se incluirá en expedientes nuevos." });
+    } catch (reason) {
+      notify.error({ title: "No se pudo quitar el requisito", message: reason instanceof Error ? reason.message : "Inténtelo nuevamente." });
     } finally {
       setBusy(false);
     }
@@ -830,7 +855,7 @@ export function CatalogsPage() {
                 ? `Requisitos · ${selected.name}`
                 : "Requisitos documentales"
             }
-            description="Obligatoriedad, condición, vigencia y naturaleza"
+            description="Documentos y obligatoriedad del proceso"
             action={
               selected ? (
                 <Button size="sm" onClick={() => openRequirement()}>
@@ -852,9 +877,6 @@ export function CatalogsPage() {
                     <small>
                       {item.code} ·{" "}
                       {item.kind === "Document" ? item.documentNature : "Dato"}
-                      {item.maximumAgeDays
-                        ? ` · ${item.maximumAgeDays} días`
-                        : ""}
                     </small>
                   </span>
                   <Badge
@@ -880,6 +902,7 @@ export function CatalogsPage() {
                   >
                     <Pencil size={16} />
                   </Button>
+                  {item.isActive && <Button variant="ghost" size="icon" disabled={busy} aria-label={`Quitar requisito ${item.label}`} onClick={() => void removeRequirement(item)}><Trash2 size={16} /></Button>}
                 </div>
               ))}
             </div>
@@ -900,7 +923,7 @@ export function CatalogsPage() {
         title={
           editingProcess ? "Editar tipo de proceso" : "Nuevo tipo de proceso"
         }
-        description="Código, nombre y estado del tipo de proceso."
+        description="Código y nombre del tipo de proceso."
         footer={
           <>
             <Button
@@ -952,7 +975,7 @@ export function CatalogsPage() {
               }
             />
           </Field>
-          <Field label="Estado">
+          {editingProcess && <Field label="Estado">
             <Select
               value={String(processForm.isActive)}
               onChange={(event) =>
@@ -965,15 +988,15 @@ export function CatalogsPage() {
               <option value="true">Activo</option>
               <option value="false">Inactivo</option>
             </Select>
-          </Field>
+          </Field>}
         </div>
-        {formError && <p className="form-error">{formError}</p>}
+        {formError && <p role="alert" className="form-error">{formError}</p>}
       </Modal>
       <Modal
         open={requirementOpen}
         onClose={() => !busy && setRequirementOpen(false)}
         title={editingRequirement ? "Editar requisito" : "Agregar requisito"}
-        description="Documento, obligatoriedad, vigencia y condición."
+        description="Documento y obligatoriedad del requisito."
         footer={
           <>
             <Button
@@ -1025,7 +1048,7 @@ export function CatalogsPage() {
               onChange={(event) =>
                 setRequirementForm({
                   ...requirementForm,
-                  kind: event.target.value as "Document" | "Data",
+                  kind: event.target.value as RequirementDefinition["kind"],
                 })
               }
             >
@@ -1047,7 +1070,6 @@ export function CatalogsPage() {
               <option value="Original">Original</option>
               <option value="Copy">Copia</option>
               <option value="Photocopy">Fotocopia</option>
-              <option value="CertifiedCopy">Copia certificada</option>
               <option value="NotApplicable">No aplica</option>
             </Select>
           </Field>
@@ -1065,33 +1087,6 @@ export function CatalogsPage() {
               <option value="false">Opcional</option>
             </Select>
           </Field>
-          <Field label="Condicional">
-            <Select
-              value={String(requirementForm.isConditional)}
-              onChange={(event) =>
-                setRequirementForm({
-                  ...requirementForm,
-                  isConditional: event.target.value === "true",
-                })
-              }
-            >
-              <option value="false">No</option>
-              <option value="true">Sí</option>
-            </Select>
-          </Field>
-          <Field label="Vigencia máxima (días)">
-            <input
-              type="number"
-              min="1"
-              value={requirementForm.maximumAgeDays}
-              onChange={(event) =>
-                setRequirementForm({
-                  ...requirementForm,
-                  maximumAgeDays: event.target.value,
-                })
-              }
-            />
-          </Field>
           <Field label="Orden">
             <input
               type="number"
@@ -1101,28 +1096,6 @@ export function CatalogsPage() {
                 setRequirementForm({
                   ...requirementForm,
                   sortOrder: Number(event.target.value),
-                })
-              }
-            />
-          </Field>
-          <Field label="Condición">
-            <textarea
-              value={requirementForm.conditionDescription ?? ""}
-              onChange={(event) =>
-                setRequirementForm({
-                  ...requirementForm,
-                  conditionDescription: event.target.value,
-                })
-              }
-            />
-          </Field>
-          <Field label="Instrucciones">
-            <textarea
-              value={requirementForm.instructions ?? ""}
-              onChange={(event) =>
-                setRequirementForm({
-                  ...requirementForm,
-                  instructions: event.target.value,
                 })
               }
             />
@@ -1142,7 +1115,7 @@ export function CatalogsPage() {
             </Select>
           </Field>
         </div>
-        {formError && <p className="form-error">{formError}</p>}
+        {formError && <p role="alert" className="form-error">{formError}</p>}
       </Modal>
     </>
   );

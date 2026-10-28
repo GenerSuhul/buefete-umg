@@ -1,6 +1,7 @@
 using BufeteJuridico.Application.Clients;
 using BufeteJuridico.Application.Common;
 using BufeteJuridico.Domain.Clients;
+using BufeteJuridico.Domain.Auditing;
 using BufeteJuridico.Domain.Documents;
 using BufeteJuridico.Domain.Identity;
 using BufeteJuridico.Infrastructure.Identity;
@@ -9,6 +10,7 @@ using BufeteJuridico.Infrastructure.Tenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
+using System.Text.Json;
 
 namespace BufeteJuridico.Infrastructure.Clients;
 
@@ -44,7 +46,7 @@ internal sealed class ClientRestrictionService(TenantRegistry registry, TenantCo
             .SingleOrDefaultAsync(u => u.Id == currentUser.UserId, ct);
         if (user is null || !UserAccessRules.CanSignIn(user, DateOnly.FromDateTime(clock.GetUtcNow().UtcDateTime)) ||
             !user.Roles.Any(r => r.Role.NormalizedName == "ADMINISTRADOR"))
-            throw new ForbiddenException("Sólo los administradores pueden emitir vetos de atención.");
+            throw new ForbiddenException("Sólo los administradores pueden administrar la lista negra.");
         if (user.IsPlatformAccount) await registry.RequirePlatformAsync(ct);
         return user.IsPlatformAccount;
     }
@@ -71,28 +73,76 @@ internal sealed class ClientRestrictionService(TenantRegistry registry, TenantCo
         if (reason.Length is < 10 or > 2000) throw new ValidationException("Indique un motivo de 10 a 2000 caracteres.");
         await LockAsync(key, ct);
         if (await gate!.ClientRestrictions.AnyAsync(r => r.Dpi == key, ct))
-            throw new ConflictException("Este DPI ya tiene un veto global permanente.");
+            throw new ConflictException("Este DPI ya tiene un bloqueo permanente en lista negra.");
         var entry = new ClientRestriction { Dpi = key, Reason = reason, SourceTenantCode = tenant.Code, IssuedByName = currentUser.Username ?? "Administrador" };
         gate.ClientRestrictions.Add(entry);
         try { await gate.SaveChangesAsync(ct); }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
-        { throw new ConflictException("Este DPI ya tiene un veto global permanente."); }
+        { throw new ConflictException("Este DPI ya tiene un bloqueo permanente en lista negra."); }
         await transaction!.CommitAsync(ct);
         return Map(entry);
     }
 
+    public async Task RemoveAsync(Guid id, RemoveClientRestrictionRequest request, CancellationToken ct)
+    {
+        var global = await RequireAdministratorAsync(ct);
+        var reason = request.Reason?.Trim() ?? "";
+        if (reason.Length is < 10 or > 2000)
+            throw new ValidationException("Indique un motivo de 10 a 2000 caracteres para retirar el bloqueo.");
+        await using var central = registry.OpenCentral();
+        var existing = await central.ClientRestrictions.AsNoTracking().SingleOrDefaultAsync(r => r.Id == id, ct)
+            ?? throw new NotFoundException("No se encontró un bloqueo vigente con esa referencia.");
+        if (!global && existing.SourceTenantCode != tenant.Code)
+            throw new ForbiddenException("Sólo la sede que emitió el bloqueo puede retirarlo.");
+        await LockAsync(existing.Dpi, ct);
+        var entry = await gate!.ClientRestrictions.SingleOrDefaultAsync(r => r.Id == id, ct)
+            ?? throw new NotFoundException("El bloqueo ya fue retirado. Actualice la lista.");
+        if (!global && entry.SourceTenantCode != tenant.Code)
+            throw new ForbiddenException("Sólo la sede que emitió el bloqueo puede retirarlo.");
+        gate.ClientRestrictions.Remove(entry);
+        gate.AuditLogs.Add(new AuditLog
+        {
+            UserId = currentUser.UserId,
+            Username = currentUser.Username,
+            OccurredAtUtc = clock.GetUtcNow(),
+            Action = "ClientRestrictionRemoved",
+            EntityType = nameof(ClientRestriction),
+            EntityId = id.ToString(),
+            ChangesJson = JsonSerializer.Serialize(new { Reason = reason, entry.Dpi, entry.SourceTenantCode }),
+            TraceId = currentUser.TraceId,
+            IpAddress = currentUser.IpAddress
+        });
+        await gate.SaveChangesAsync(ct);
+        await transaction!.CommitAsync(ct);
+    }
+
     public async Task<ClientRestrictionStatus> GetStatusAsync(string? dpi, CancellationToken ct)
     {
+        return (await GetStatusesAsync([dpi], ct))[0];
+    }
+
+    public async Task<IReadOnlyList<ClientRestrictionStatus>> GetStatusesAsync(IReadOnlyList<string?> dpis, CancellationToken ct)
+    {
+        if (dpis.Count == 0) return [];
         // Historical malformed identities must not make the record unreadable.
         // If 13 ASCII digits can be recovered, still check the registry, but require correction before attention.
-        var valid = true;
-        try { _ = ClientRestrictionIdentity.Normalize(dpi); }
-        catch (ArgumentException) { valid = false; }
-        var key = ContactNormalization.Digits(dpi);
-        if (key.Length != 13 || key.Any(c => c is < '0' or > '9')) return new(false, null, false);
+        var identities = dpis.Select(dpi =>
+        {
+            var valid = true;
+            try { _ = ClientRestrictionIdentity.Normalize(dpi); }
+            catch (ArgumentException) { valid = false; }
+            return (Key: ContactNormalization.Digits(dpi), Valid: valid);
+        }).ToArray();
+        var keys = identities.Select(identity => identity.Key)
+            .Where(key => key.Length == 13 && key.All(c => c is >= '0' and <= '9')).Distinct().ToArray();
+        if (keys.Length == 0) return identities.Select(_ => new ClientRestrictionStatus(false, null, false)).ToArray();
         await using var central = registry.OpenCentral();
-        var id = await central.ClientRestrictions.Where(r => r.Dpi == key).Select(r => (Guid?)r.Id).SingleOrDefaultAsync(ct);
-        return new(id.HasValue, id, valid);
+        var rows = await central.ClientRestrictions.AsNoTracking().Where(r => keys.Contains(r.Dpi))
+            .Select(r => new { r.Dpi, r.Id }).ToListAsync(ct);
+        var blocked = rows.ToDictionary(r => r.Dpi, r => r.Id);
+        return identities.Select(identity => blocked.TryGetValue(identity.Key, out var id)
+            ? new ClientRestrictionStatus(true, id, identity.Valid)
+            : new ClientRestrictionStatus(false, null, identity.Valid)).ToArray();
     }
 
     public async Task EnsureAllowedAsync(string? dpi, CancellationToken ct, bool required = true)
@@ -101,7 +151,7 @@ internal sealed class ClientRestrictionService(TenantRegistry registry, TenantCo
         var key = Key(dpi);
         await LockAsync(key, ct);
         if (await gate!.ClientRestrictions.AnyAsync(r => r.Dpi == key, ct))
-            throw new ConflictException("Atención bloqueada: este DPI tiene un veto global permanente. Consulte con la administración.");
+            throw new ConflictException("Atención bloqueada: este DPI tiene un bloqueo permanente en lista negra. Consulte con la administración.");
     }
 
     public async Task EnsureCaseAllowedAsync(Guid caseId, CancellationToken ct)

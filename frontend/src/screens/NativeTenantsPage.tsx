@@ -56,8 +56,8 @@ function TenantAdministration() {
   }
 
   return <>
-    <PageHeader eyebrow="ADMINISTRACIÓN DE PLATAFORMA" title="Bufetes y sedes" description="Administre las sedes y acceda a sus espacios de trabajo." />
-    <p><ShieldCheck size={16} aria-hidden="true" /> Superusuario · Sede actual: <strong>{user?.tenantName ?? "Petén"}</strong></p>
+    <PageHeader eyebrow="ADMINISTRACIÓN GLOBAL" title="Bufetes y sedes" description="Gestione los espacios de trabajo y sus administradores iniciales. Los registros jurídicos se administran dentro de cada sede." />
+    <div className="tenant-scope-note"><ShieldCheck size={20} aria-hidden="true" /><div><strong>Control global · Superusuario</strong><p>Espacio operativo actual: <b>{user?.tenantName ?? 'Petén'}</b>. Crear o editar una sede no cambia este contexto. Utilice «Entrar a la sede» para administrar allí a su personal y sus registros.</p></div></div>
     {formError && <div role="alert" className="form-error">{formError}</div>}
     <div className="tenants-layout">
       <Card>
@@ -83,13 +83,15 @@ function TenantRow({ tenant, current, busy, onEnter, onUpdate }: { tenant: Tenan
   const [name, setName] = useState(tenant.name);
   return <article className="tenant-row">
     <Building2 size={22} aria-hidden="true" />
-    <div><strong>{tenant.name}</strong><p>Código: {tenant.code} {current && "· Sede actual"}</p><Badge tone={tenant.isActive ? "success" : "neutral"}>{tenant.status === "Failed" ? "Error de aprovisionamiento" : tenant.isActive ? "Activa" : "Suspendida"}</Badge></div>
+    <div><strong>{tenant.name}</strong><p>Código: {tenant.code} {current && "· Sede actual"}</p><Badge tone={tenant.status === 'Failed' ? 'danger' : tenant.status === 'Provisioning' ? 'info' : tenant.isActive ? 'success' : 'neutral'}>{tenant.status === 'Failed' ? 'Error de aprovisionamiento' : tenant.status === 'Provisioning' ? 'Preparando sede' : tenant.isActive ? 'Activa' : 'Suspendida'}</Badge></div>
     {tenant.status === "Failed" && <p>Para reintentar, complete el formulario «Crear sede» con este mismo código y los datos del administrador.</p>}
     {tenant.status === "Ready" && <div>
       <Field label={`Nombre de ${tenant.code}`}><input value={name} maxLength={160} onChange={event => setName(event.target.value)} /></Field>
       <Button variant="secondary" disabled={busy || name.trim() === tenant.name || name.trim().length < 2} onClick={() => void onUpdate(tenant, name, tenant.isActive)}>Guardar nombre</Button>
       <Button variant="secondary" disabled={busy || tenant.code === "peten" || current} onClick={() => void onUpdate(tenant, tenant.name, !tenant.isActive)}>{tenant.isActive ? "Suspender" : "Habilitar"}</Button>
       <Button disabled={busy || !tenant.isActive || current} onClick={() => void onEnter(tenant)}>Entrar a la sede</Button>
+      {current && <small>Ya está trabajando en esta sede.</small>}
+      {tenant.code === 'peten' && <small>Petén aloja la administración central y no se puede suspender.</small>}
     </div>}
   </article>;
 }

@@ -1,14 +1,14 @@
 """Render the user guide for visual verification; generated images are not source assets."""
 from pathlib import Path
-import pymupdf
+import pypdfium2
 from PIL import Image, ImageDraw
 
 folder = Path(__file__).resolve().parents[1] / 'output/pdf'
-document = pymupdf.open(folder / 'manual-demo-bufete-umg.pdf')
+document = pypdfium2.PdfDocument(folder / 'manual-bufete-umg.pdf')
 sheet = Image.new('RGB', (1200, ((len(document)+3)//4)*450), '#dfe5e9')
 for index, page in enumerate(document):
     path = folder / f'page-{index+1}.png'
-    page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5)).save(path)
+    page.render(scale=1.5).to_pil().save(path)
     thumb = Image.open(path).convert('RGB')
     thumb.thumbnail((285, 415))
     x, y = (index%4)*300, (index//4)*450

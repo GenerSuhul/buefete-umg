@@ -9,9 +9,26 @@ namespace BufeteJuridico.Api.Controllers;
 [Route("api/v{version:apiVersion}/auth")]
 public sealed class AuthController(
     IAuthenticationService authenticationService,
+    IPlatformPasswordRecoveryService platformPasswordRecoveryService,
     IUserManagementService userManagementService,
     ICurrentUser currentUser) : ApiV1ControllerBase
 {
+    [HttpPost("platform-password-recovery/start")]
+    [AllowAnonymous]
+    [EnableRateLimiting("auth")]
+    public async Task<ActionResult<PlatformPasswordRecoveryChallenge>> StartPlatformRecovery(
+        PlatformPasswordRecoveryStartRequest request, CancellationToken cancellationToken) =>
+        Ok(await platformPasswordRecoveryService.StartAsync(request, cancellationToken));
+
+    [HttpPost("platform-password-recovery/complete")]
+    [AllowAnonymous]
+    [EnableRateLimiting("auth")]
+    public async Task<IActionResult> CompletePlatformRecovery(
+        PlatformPasswordRecoveryCompleteRequest request, CancellationToken cancellationToken)
+    {
+        await platformPasswordRecoveryService.CompleteAsync(request, cancellationToken);
+        return NoContent();
+    }
     [HttpPost("login")]
     [AllowAnonymous]
     [EnableRateLimiting("auth")]

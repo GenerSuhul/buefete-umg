@@ -49,7 +49,7 @@ public sealed record SaveStudentRequest(
     string ResidenceAddress,
     string? MobilePhone,
     string? HomePhone,
-    string Email,
+    string? Email,
     DateOnly RegistrationDate,
     Guid? ConcurrencyToken = null,
     UpdateStudentPracticeRequest? Practice = null);
@@ -125,7 +125,7 @@ public sealed record StudentAccessRequest(
 public sealed record RegisterStudentRequest(
     SaveStudentRequest Student,
     CreateEnrollmentRequest Enrollment,
-    StudentAccessRequest Access);
+    StudentAccessRequest? Access);
 
 public sealed record StudentAccessDto(
     Guid UserAccountId,
@@ -136,7 +136,7 @@ public sealed record StudentAccessDto(
 public sealed record StudentRegistrationDto(
     StudentDto Student,
     EnrollmentApplicationDto Enrollment,
-    StudentAccessDto Access);
+    StudentAccessDto? Access);
 
 public sealed record ChangeEnrollmentStatusRequest(
     EnrollmentStatus Status,

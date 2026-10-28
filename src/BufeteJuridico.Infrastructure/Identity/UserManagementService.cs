@@ -226,6 +226,10 @@ internal sealed class UserManagementService(
             var student = await dbContext.Students.IgnoreQueryFilters().SingleOrDefaultAsync(item => item.UserAccountId == id, cancellationToken);
             if (student is { IsActive: false } || student?.DeletedAtUtc is not null)
                 throw new ConflictException("Active primero la ficha del alumno para habilitar su acceso.");
+            if (student is not null && await dbContext.StudentPracticeClosures.AnyAsync(item => item.StudentId == student.Id, cancellationToken))
+                throw new ConflictException("La práctica del alumno está cerrada; su acceso no puede reactivarse.");
+            if (student is not null && await tenantRegistry.IsStudentSuspendedAsync(student.Dpi, cancellationToken))
+                throw new ConflictException("El alumno tiene una suspensión global vigente.");
         }
         if (user.IsActive && !request.IsActive) await EnsureAnotherActiveAdministratorAsync(user, cancellationToken);
         user.IsActive = request.IsActive;

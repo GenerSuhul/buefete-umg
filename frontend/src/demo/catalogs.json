@@ -9,7 +9,7 @@
       "requirements": [
         {
           "id": "FIJACION_PENSION-MATRIMONIO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "FIJACION_PENSION",
           "code": "MATRIMONIO",
           "label": "Certificación original y reciente de matrimonio",
@@ -26,7 +26,7 @@
         },
         {
           "id": "FIJACION_PENSION-NACIMIENTO_HIJOS",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "FIJACION_PENSION",
           "code": "NACIMIENTO_HIJOS",
           "label": "Certificación de nacimiento de hijos menores",
@@ -43,7 +43,7 @@
         },
         {
           "id": "FIJACION_PENSION-DPI_SOLICITANTE",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "FIJACION_PENSION",
           "code": "DPI_SOLICITANTE",
           "label": "Copia del DPI del solicitante",
@@ -60,7 +60,7 @@
         },
         {
           "id": "FIJACION_PENSION-NOMBRE_DEMANDADO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "FIJACION_PENSION",
           "code": "NOMBRE_DEMANDADO",
           "label": "Nombre completo de la persona demandada",
@@ -77,7 +77,7 @@
         },
         {
           "id": "FIJACION_PENSION-DIRECCION_DEMANDADO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "FIJACION_PENSION",
           "code": "DIRECCION_DEMANDADO",
           "label": "Dirección donde vive o trabaja la persona demandada",
@@ -103,7 +103,7 @@
       "requirements": [
         {
           "id": "AUMENTO_DISMINUCION_PENSION-MATRIMONIO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "AUMENTO_DISMINUCION_PENSION",
           "code": "MATRIMONIO",
           "label": "Certificación original y reciente de matrimonio",
@@ -120,7 +120,7 @@
         },
         {
           "id": "AUMENTO_DISMINUCION_PENSION-NACIMIENTO_HIJOS",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "AUMENTO_DISMINUCION_PENSION",
           "code": "NACIMIENTO_HIJOS",
           "label": "Certificación de nacimiento de hijos menores",
@@ -137,7 +137,7 @@
         },
         {
           "id": "AUMENTO_DISMINUCION_PENSION-DPI_DEMANDADO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "AUMENTO_DISMINUCION_PENSION",
           "code": "DPI_DEMANDADO",
           "label": "Número de DPI de la persona demandada",
@@ -154,7 +154,7 @@
         },
         {
           "id": "AUMENTO_DISMINUCION_PENSION-DPI_SOLICITANTE",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "AUMENTO_DISMINUCION_PENSION",
           "code": "DPI_SOLICITANTE",
           "label": "Copia del DPI del solicitante",
@@ -171,7 +171,7 @@
         },
         {
           "id": "AUMENTO_DISMINUCION_PENSION-NOMBRE_DIRECCION_DEMANDADO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "AUMENTO_DISMINUCION_PENSION",
           "code": "NOMBRE_DIRECCION_DEMANDADO",
           "label": "Nombre y dirección donde vive o trabaja la persona demandada",
@@ -188,7 +188,7 @@
         },
         {
           "id": "AUMENTO_DISMINUCION_PENSION-SENTENCIA_CONVENIO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "AUMENTO_DISMINUCION_PENSION",
           "code": "SENTENCIA_CONVENIO",
           "label": "Certificación original de sentencia o convenio que fijó la pensión",
@@ -214,7 +214,7 @@
       "requirements": [
         {
           "id": "DIVORCIO_CAUSAL-MATRIMONIO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "DIVORCIO_CAUSAL",
           "code": "MATRIMONIO",
           "label": "Certificación original y reciente de matrimonio",
@@ -231,7 +231,7 @@
         },
         {
           "id": "DIVORCIO_CAUSAL-NACIMIENTO_HIJOS",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "DIVORCIO_CAUSAL",
           "code": "NACIMIENTO_HIJOS",
           "label": "Certificación de hijos en común",
@@ -248,7 +248,7 @@
         },
         {
           "id": "DIVORCIO_CAUSAL-DPI_SOLICITANTE",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "DIVORCIO_CAUSAL",
           "code": "DPI_SOLICITANTE",
           "label": "Copia del DPI del solicitante",
@@ -265,7 +265,7 @@
         },
         {
           "id": "DIVORCIO_CAUSAL-DPI_DEMANDADO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "DIVORCIO_CAUSAL",
           "code": "DPI_DEMANDADO",
           "label": "Número de DPI de la persona demandada",
@@ -282,7 +282,7 @@
         },
         {
           "id": "DIVORCIO_CAUSAL-NOMBRE_DIRECCION_DEMANDADO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "DIVORCIO_CAUSAL",
           "code": "NOMBRE_DIRECCION_DEMANDADO",
           "label": "Nombre y dirección donde vive o trabaja la persona demandada",
@@ -299,7 +299,7 @@
         },
         {
           "id": "DIVORCIO_CAUSAL-CARENCIA_BIENES",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "DIVORCIO_CAUSAL",
           "code": "CARENCIA_BIENES",
           "label": "Carencia de bienes original y reciente",
@@ -316,7 +316,7 @@
         },
         {
           "id": "DIVORCIO_CAUSAL-NACIMIENTO_CONYUGES",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "DIVORCIO_CAUSAL",
           "code": "NACIMIENTO_CONYUGES",
           "label": "Certificación de nacimiento de ambos cónyuges",
@@ -333,7 +333,7 @@
         },
         {
           "id": "DIVORCIO_CAUSAL-CONSTANCIA_INGRESOS",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "DIVORCIO_CAUSAL",
           "code": "CONSTANCIA_INGRESOS",
           "label": "Constancia de ingresos",
@@ -350,7 +350,7 @@
         },
         {
           "id": "DIVORCIO_CAUSAL-FECHA_SEPARACION",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "DIVORCIO_CAUSAL",
           "code": "FECHA_SEPARACION",
           "label": "Fecha aproximada de separación",
@@ -376,7 +376,7 @@
       "requirements": [
         {
           "id": "PATERNIDAD_FILIACION-MATRIMONIO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "PATERNIDAD_FILIACION",
           "code": "MATRIMONIO",
           "label": "Certificación original y reciente de matrimonio",
@@ -393,7 +393,7 @@
         },
         {
           "id": "PATERNIDAD_FILIACION-NACIMIENTO_HIJOS",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "PATERNIDAD_FILIACION",
           "code": "NACIMIENTO_HIJOS",
           "label": "Certificación de nacimiento de hijos cuyo reconocimiento se pretende",
@@ -410,7 +410,7 @@
         },
         {
           "id": "PATERNIDAD_FILIACION-DPI_SOLICITANTE",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "PATERNIDAD_FILIACION",
           "code": "DPI_SOLICITANTE",
           "label": "Copia del DPI del solicitante",
@@ -427,7 +427,7 @@
         },
         {
           "id": "PATERNIDAD_FILIACION-NOMBRE_DIRECCION_DEMANDADO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "PATERNIDAD_FILIACION",
           "code": "NOMBRE_DIRECCION_DEMANDADO",
           "label": "Nombre y dirección donde vive o trabaja la persona demandada",
@@ -444,7 +444,7 @@
         },
         {
           "id": "PATERNIDAD_FILIACION-CAPACIDAD_ADN",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "PATERNIDAD_FILIACION",
           "code": "CAPACIDAD_ADN",
           "label": "Capacidad económica para pagar prueba de ADN en INACIF",
@@ -470,7 +470,7 @@
       "requirements": [
         {
           "id": "GUARDA_CUSTODIA-MATRIMONIO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "GUARDA_CUSTODIA",
           "code": "MATRIMONIO",
           "label": "Certificación original y reciente de matrimonio",
@@ -487,7 +487,7 @@
         },
         {
           "id": "GUARDA_CUSTODIA-NACIMIENTO_HIJOS",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "GUARDA_CUSTODIA",
           "code": "NACIMIENTO_HIJOS",
           "label": "Certificación de nacimiento de hijos menores",
@@ -504,7 +504,7 @@
         },
         {
           "id": "GUARDA_CUSTODIA-DPI_SOLICITANTE",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "GUARDA_CUSTODIA",
           "code": "DPI_SOLICITANTE",
           "label": "Copia del DPI del solicitante",
@@ -521,7 +521,7 @@
         },
         {
           "id": "GUARDA_CUSTODIA-DPI_DEMANDADO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "GUARDA_CUSTODIA",
           "code": "DPI_DEMANDADO",
           "label": "Número de DPI de la persona demandada",
@@ -538,7 +538,7 @@
         },
         {
           "id": "GUARDA_CUSTODIA-NOMBRE_DIRECCION_DEMANDADO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "GUARDA_CUSTODIA",
           "code": "NOMBRE_DIRECCION_DEMANDADO",
           "label": "Nombre y dirección donde vive o trabaja la persona demandada",
@@ -564,7 +564,7 @@
       "requirements": [
         {
           "id": "COBRO_PENSIONES-MATRIMONIO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "COBRO_PENSIONES",
           "code": "MATRIMONIO",
           "label": "Certificación original y reciente de matrimonio",
@@ -581,7 +581,7 @@
         },
         {
           "id": "COBRO_PENSIONES-NACIMIENTO_HIJOS",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "COBRO_PENSIONES",
           "code": "NACIMIENTO_HIJOS",
           "label": "Certificación de nacimiento de hijos menores",
@@ -598,7 +598,7 @@
         },
         {
           "id": "COBRO_PENSIONES-DPI_SOLICITANTE",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "COBRO_PENSIONES",
           "code": "DPI_SOLICITANTE",
           "label": "Copia del DPI del solicitante",
@@ -615,7 +615,7 @@
         },
         {
           "id": "COBRO_PENSIONES-DPI_DEMANDADO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "COBRO_PENSIONES",
           "code": "DPI_DEMANDADO",
           "label": "Número de DPI de la persona demandada",
@@ -632,7 +632,7 @@
         },
         {
           "id": "COBRO_PENSIONES-NOMBRE_DIRECCION_DEMANDADO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "COBRO_PENSIONES",
           "code": "NOMBRE_DIRECCION_DEMANDADO",
           "label": "Nombre y dirección donde vive o trabaja la persona demandada",
@@ -649,7 +649,7 @@
         },
         {
           "id": "COBRO_PENSIONES-SENTENCIA_CONVENIO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "COBRO_PENSIONES",
           "code": "SENTENCIA_CONVENIO",
           "label": "Certificación original de sentencia o convenio que fijó la pensión",
@@ -666,7 +666,7 @@
         },
         {
           "id": "COBRO_PENSIONES-ESTADO_CUENTA",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "COBRO_PENSIONES",
           "code": "ESTADO_CUENTA",
           "label": "Estado de cuenta del período reclamado",
@@ -692,7 +692,7 @@
       "requirements": [
         {
           "id": "CAMBIO_NOMBRE-DPI_SOLICITANTE",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "CAMBIO_NOMBRE",
           "code": "DPI_SOLICITANTE",
           "label": "Copia del DPI del solicitante",
@@ -709,7 +709,7 @@
         },
         {
           "id": "CAMBIO_NOMBRE-CERTIFICACION_NACIMIENTO",
-          "scope": "LegalProcess",
+          "scope": "Process",
           "processTypeId": "CAMBIO_NOMBRE",
           "code": "CERTIFICACION_NACIMIENTO",
           "label": "Certificación de nacimiento",

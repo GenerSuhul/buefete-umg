@@ -203,6 +203,7 @@ export interface Client {
   isActive: boolean;
   createdAtUtc: string;
   concurrencyToken: Id;
+  restriction?: ClientRestrictionStatus | null;
 }
 
 export interface IncomeDeclaration {
@@ -281,7 +282,7 @@ export interface StudentAccess {
 export interface StudentRegistration {
   student: Student;
   enrollment: Enrollment;
-  access: StudentAccess;
+  access: StudentAccess | null;
 }
 
 export interface StudentRequirement {
@@ -564,7 +565,7 @@ export interface ProcessType {
 
 export interface RequirementDefinition {
   id: Id;
-  scope: 'LegalProcess' | 'StudentEnrollment';
+  scope: 'Process' | 'StudentEnrollment' | 'ClientGeneral';
   processTypeId: Id | null;
   code: string;
   label: string;
@@ -572,7 +573,7 @@ export interface RequirementDefinition {
   isRequired: boolean;
   isConditional: boolean;
   conditionDescription: string | null;
-  documentNature: 'Original' | 'Copy' | 'Photocopy' | 'CertifiedCopy' | 'NotApplicable';
+  documentNature: 'Original' | 'Copy' | 'Photocopy' | 'NotApplicable';
   maximumAgeDays: number | null;
   subject: string | null;
   instructions: string | null;

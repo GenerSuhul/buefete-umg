@@ -21,6 +21,7 @@ internal static class ModelConfiguration
         ConfigureDocuments(modelBuilder);
         ConfigureClients(modelBuilder);
         ConfigureStudents(modelBuilder);
+        StudentLegalStudyConfiguration.Configure(modelBuilder);
         ConfigureCatalogs(modelBuilder);
         ConfigureCases(modelBuilder);
         ConfigureOperations(modelBuilder);
@@ -208,6 +209,18 @@ internal static class ModelConfiguration
 
     private static void ConfigureStudents(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<StudentDiscipline>(entity =>
+        {
+            entity.ToTable("student_disciplines");
+            entity.Property(item => item.Dpi).HasMaxLength(13);
+            entity.Property(item => item.StudentName).HasMaxLength(200);
+            entity.Property(item => item.Reason).HasMaxLength(2000);
+            entity.Property(item => item.SourceTenantCode).HasMaxLength(40);
+            entity.Property(item => item.IssuedByName).HasMaxLength(200);
+            entity.Property(item => item.RevocationReason).HasMaxLength(2000);
+            entity.HasIndex(item => new { item.Dpi, item.RevokedAtUtc });
+            entity.HasIndex(item => item.CreatedAtUtc);
+        });
         modelBuilder.Entity<Student>(entity =>
         {
             entity.ToTable("students");
@@ -223,7 +236,7 @@ internal static class ModelConfiguration
                 .HasFilter("\"DeletedAtUtc\" IS NULL");
             entity.HasIndex(item => item.StudentCardNumber).IsUnique();
             entity.HasIndex(item => item.Dpi).IsUnique();
-            entity.HasIndex(item => item.Email).IsUnique();
+            entity.HasIndex(item => item.Email).IsUnique().HasFilter("\"Email\" <> ''");
             entity.HasIndex(item => item.UserAccountId).IsUnique();
             entity.HasIndex(item => item.DeletedAtUtc);
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(item => item.UserAccountId).OnDelete(DeleteBehavior.Restrict);

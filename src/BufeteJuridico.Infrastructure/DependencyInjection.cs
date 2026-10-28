@@ -92,10 +92,14 @@ public static class DependencyInjection
 
         services.AddScoped<IPasswordHasher<UserAccount>, PasswordHasher<UserAccount>>();
         services.AddScoped<IAuthenticationService, AuthenticationService>();
+        services.AddScoped<IPlatformPasswordRecoveryService, PlatformPasswordRecoveryService>();
         services.AddScoped<IUserManagementService, UserManagementService>();
         services.AddScoped<IClientService, ClientService>();
         services.AddScoped<IClientRestrictionService, ClientRestrictionService>();
         services.AddScoped<IStudentService, StudentService>();
+        services.AddScoped<IPracticeNoticeService, PracticeNoticeService>();
+        services.AddScoped<IStudentDisciplineService, StudentDisciplineService>();
+        services.AddScoped<IStudentLegalStudyService, StudentLegalStudyService>();
         services.AddScoped<ICatalogService, CatalogService>();
         services.AddScoped<ICaseService, CaseService>();
         services.AddScoped<IDashboardService, DashboardService>();

@@ -15,7 +15,7 @@ describe('Confirmación de veto permanente', () => {
     vi.mocked(clientRestrictions.create).mockResolvedValue({ id: 'qa' } as never);
     const saved = vi.fn();
     render(<ClientRestrictionDialog dpi="1234 56789 0123" onClose={vi.fn()} onSaved={saved} />);
-    const button = screen.getByRole('button', { name: 'Confirmar veto permanente' }); expect(button).toBeDisabled();
+    const button = screen.getByRole('button', { name: 'Confirmar ingreso a lista negra' }); expect(button).toBeDisabled();
     complete(); expect(button).toBeEnabled(); fireEvent.click(button);
     await waitFor(() => expect(saved).toHaveBeenCalledOnce());
     expect(clientRestrictions.create).toHaveBeenCalledWith('1234 56789 0123', '1234 56789 0123', 'Motivo institucional documentado');
@@ -24,14 +24,14 @@ describe('Confirmación de veto permanente', () => {
     vi.mocked(clientRestrictions.create).mockRejectedValue(new Error('Registro central no disponible'));
     const saved = vi.fn();
     render(<ClientRestrictionDialog dpi="1234 56789 0123" onClose={vi.fn()} onSaved={saved} />);
-    complete(); fireEvent.click(screen.getByRole('button', { name: 'Confirmar veto permanente' }));
+    complete(); fireEvent.click(screen.getByRole('button', { name: 'Confirmar ingreso a lista negra' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Registro central no disponible');
     expect(saved).not.toHaveBeenCalled(); expect(screen.getByLabelText('Motivo institucional')).toHaveValue('Motivo institucional documentado');
-    expect(screen.getByRole('button', { name: 'Confirmar veto permanente' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Confirmar ingreso a lista negra' })).toBeEnabled();
   });
   it('un DPI diferente no habilita la confirmación', () => {
     render(<ClientRestrictionDialog dpi="1234 56789 0123" onClose={vi.fn()} onSaved={vi.fn()} />);
     complete(); fireEvent.change(screen.getByLabelText('Repita el DPI para confirmar'), { target: { value: '1234567890124' } });
-    expect(screen.getByRole('button', { name: 'Confirmar veto permanente' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Confirmar ingreso a lista negra' })).toBeDisabled();
   });
 });
