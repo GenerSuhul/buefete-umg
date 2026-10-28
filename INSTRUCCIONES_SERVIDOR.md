@@ -133,6 +133,13 @@ Un solo VPS no constituye alta disponibilidad.
 
 ## Pendientes funcionales heredados que deben cerrarse o reportarse
 
+**Actualización de entrega del 28 de octubre:** leer primero
+`docs/auditoria/DEPENDENCIAS_2026-10-28.md`. Se publicaron actualizaciones de
+seguridad por solicitud expresa del responsable sin completar su validación.
+El lock actualizado pasó auditoría npm, pero faltan instalación reproducible,
+suite con nuevas versiones, build y navegador. Resolverlos antes de exponer
+el sistema y no confundir las 103 pruebas previas con aprobación del cambio.
+
 La evidencia del 27–28 de octubre es local, no aceptación del servidor:
 
 - A10: cambio de modalidad del alumno con limpieza/ignoración de datos inaplicables.
